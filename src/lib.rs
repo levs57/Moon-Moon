@@ -102,7 +102,7 @@ where
       augmented_circuit_params_primary.clone(),
       None,
       c_primary,
-      ro_consts_circuit_primary.clone(),
+      ro_consts_circuit_primary.clone(), false,
     );
     let mut cs: ShapeCS<G1> = ShapeCS::new();
     let _ = circuit_primary.synthesize(&mut cs);
@@ -113,7 +113,7 @@ where
       augmented_circuit_params_secondary.clone(),
       None,
       c_secondary,
-      ro_consts_circuit_secondary.clone(),
+      ro_consts_circuit_secondary.clone(), true,
     );
     let mut cs: ShapeCS<G2> = ShapeCS::new();
     let _ = circuit_secondary.synthesize(&mut cs);
