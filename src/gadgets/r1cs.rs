@@ -16,7 +16,7 @@ use crate::{
   traits::{commitment::CommitmentTrait, Group, ROCircuitTrait, ROConstantsCircuit},
 };
 use bellperson::{
-  gadgets::{boolean::Boolean, num::AllocatedNum, Assignment},
+  gadgets::{boolean::Boolean, boolean::AllocatedBit, num::AllocatedNum, Assignment},
   ConstraintSystem, SynthesisError,
 };
 use ff::Field;
@@ -27,6 +27,7 @@ pub struct AllocatedR1CSInstance<G: Group> {
   pub(crate) W: AllocatedPoint<G>,
   pub(crate) X0: AllocatedNum<G::Base>,
   pub(crate) X1: AllocatedNum<G::Base>,
+  pub(crate) X2: AllocatedNum<G::Base>, // new added X2 parameter everywhere. it is a running hash 
 }
 
 impl<G: Group> AllocatedR1CSInstance<G> {
@@ -49,8 +50,13 @@ impl<G: Group> AllocatedR1CSInstance<G> {
       cs.namespace(|| "allocate X[1]"),
       u.get().map_or(None, |u| Some(u.X[1])),
     )?;
+    let X2 = alloc_scalar_as_base::<G, _>(
+      cs.namespace(|| "allocate X[2]"),
+      u.get().map_or(None, |u| Some(u.X[2])),
+    )?;
 
-    Ok(AllocatedR1CSInstance { W, X0, X1 })
+
+    Ok(AllocatedR1CSInstance { W, X0, X1, X2 })
   }
 
   /// Absorb the provided instance in the RO
@@ -60,6 +66,7 @@ impl<G: Group> AllocatedR1CSInstance<G> {
     ro.absorb(self.W.is_infinity.clone());
     ro.absorb(self.X0.clone());
     ro.absorb(self.X1.clone());
+    ro.absorb(self.X2.clone());
   }
 }
 
@@ -70,6 +77,7 @@ pub struct AllocatedRelaxedR1CSInstance<G: Group> {
   pub(crate) u: AllocatedNum<G::Base>,
   pub(crate) X0: BigNat<G::Base>,
   pub(crate) X1: BigNat<G::Base>,
+  pub(crate) X2: BigNat<G::Base>,
 }
 
 impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
@@ -124,7 +132,19 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
-    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1 })
+    let X2 = BigNat::alloc_from_nat(
+      cs.namespace(|| "allocate X[2]"),
+      || {
+        Ok(f_to_nat(
+          &inst.clone().map_or(G::Scalar::zero(), |inst| inst.X[2]),
+        ))
+      },
+      limb_width,
+      n_limbs,
+    )?;
+
+
+    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2 })
   }
 
   /// Allocates the hardcoded default RelaxedR1CSInstance in the circuit.
@@ -153,7 +173,14 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
-    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1 })
+    let X2 = BigNat::alloc_from_nat(
+      cs.namespace(|| "allocate x_default[2]"),
+      || Ok(f_to_nat(&G::Scalar::zero())),
+      limb_width,
+      n_limbs,
+    )?;
+
+    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2 })
   }
 
   /// Allocates the R1CS Instance as a RelaxedR1CSInstance in the circuit.
@@ -182,12 +209,21 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
+    let X2 = BigNat::from_num(
+      cs.namespace(|| "allocate X2 from relaxed r1cs"),
+      Num::from(inst.X2.clone()),
+      limb_width,
+      n_limbs,
+    )?;
+
+
     Ok(AllocatedRelaxedR1CSInstance {
       W: inst.W,
       E,
       u,
       X0,
       X1,
+      X2,
     })
   }
 
@@ -237,6 +273,21 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       ro.absorb(limb);
     }
 
+    let X2_bn = self
+      .X2
+      .as_limbs::<CS>()
+      .iter()
+      .enumerate()
+      .map(|(i, limb)| {
+        limb.as_allocated_num(cs.namespace(|| format!("convert limb {i} of X_r[2] to num")))
+      })
+      .collect::<Result<Vec<AllocatedNum<G::Base>>, _>>()?;
+
+    // absorb each of the limbs of X[2]
+    for limb in X2_bn.into_iter() {
+      ro.absorb(limb);
+    }
+
     Ok(())
   }
 
@@ -251,7 +302,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     ro_consts: ROConstantsCircuit<G>,
     limb_width: usize,
     n_limbs: usize,
-  ) -> Result<AllocatedRelaxedR1CSInstance<G>, SynthesisError> {
+  ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Vec<AllocatedBit>), SynthesisError> {  // new - this is messy, I will just return r so I can use it later
     // Compute r:
     let mut ro = G::ROCircuit::new(ro_consts, NUM_FE_FOR_RO);
     ro.absorb(params);
@@ -329,13 +380,34 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     // Now reduce
     let X1_fold = r_new_1.red_mod(cs.namespace(|| "reduce folded X[1]"), &m_bn)?;
 
-    Ok(Self {
-      W: W_fold,
-      E: E_fold,
-      u: u_fold,
-      X0: X0_fold,
-      X1: X1_fold,
-    })
+    // Analyze X2 to bignat
+    let X2_bn = BigNat::from_num(
+      cs.namespace(|| "allocate X2_bn"),
+      Num::from(u.X2.clone()),
+      limb_width,
+      n_limbs,
+    )?;
+
+    // Fold self.X[2] + r * X[2]
+    let (_, r_2) = X2_bn.mult_mod(cs.namespace(|| "r*X[2]"), &r_bn, &m_bn)?;
+    // add X_r[1]
+    let r_new_2 = self.X2.add::<CS>(&r_2)?;
+    // Now reduce
+    let X2_fold = r_new_2.red_mod(cs.namespace(|| "reduce folded X[2]"), &m_bn)?;
+
+
+
+    Ok((Self {
+          W: W_fold,
+          E: E_fold,
+          u: u_fold,
+          X0: X0_fold,
+          X1: X1_fold,
+          X2: X2_fold,
+        }, 
+        r_bits
+      )
+    )
   }
 
   /// If the condition is true then returns this otherwise it returns the other
@@ -380,6 +452,13 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       condition,
     )?;
 
-    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1 })
+    let X2 = conditionally_select_bignat(
+      cs.namespace(|| "X[2] = cond ? self.X[2] : other.X[2]"),
+      &self.X2,
+      &other.X2,
+      condition,
+    )?;
+
+    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2 })
   }
 }

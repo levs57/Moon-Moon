@@ -59,6 +59,8 @@ pub struct NovaAugmentedCircuitInputs<G: Group> {
   U: Option<RelaxedR1CSInstance<G>>,
   u: Option<R1CSInstance<G>>,
   T: Option<Commitment<G>>,
+  W0: Option<Commitment<G>>, // new
+  w0: Option<Commitment<G>>, // new
 }
 
 impl<G: Group> NovaAugmentedCircuitInputs<G> {
@@ -72,6 +74,8 @@ impl<G: Group> NovaAugmentedCircuitInputs<G> {
     U: Option<RelaxedR1CSInstance<G>>,
     u: Option<R1CSInstance<G>>,
     T: Option<Commitment<G>>,
+    W0: Option<Commitment<G>>,
+    w0: Option<Commitment<G>>,
   ) -> Self {
     Self {
       params,
@@ -81,6 +85,8 @@ impl<G: Group> NovaAugmentedCircuitInputs<G> {
       U,
       u,
       T,
+      W0, // new
+      w0, // new
     }
   }
 }
@@ -92,6 +98,7 @@ pub struct NovaAugmentedCircuit<G: Group, SC: StepCircuit<G::Base>> {
   ro_consts: ROConstantsCircuit<G>,
   inputs: Option<NovaAugmentedCircuitInputs<G>>,
   step_circuit: SC, // The function that is applied for each step
+  expose_w0: bool, // new
 }
 
 impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
@@ -101,12 +108,14 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     inputs: Option<NovaAugmentedCircuitInputs<G>>,
     step_circuit: SC,
     ro_consts: ROConstantsCircuit<G>,
+    expose_w0: bool,
   ) -> Self {
     Self {
       params,
       inputs,
       step_circuit,
       ro_consts,
+      expose_w0,
     }
   }
 
@@ -115,6 +124,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     &self,
     mut cs: CS,
     arity: usize,
+    expose_w0: bool, // new - this bool value will be equal to not(is_primary_circuit), it determines whether we need to allocate W0, w0
   ) -> Result<
     (
       AllocatedNum<G::Base>,
@@ -124,6 +134,8 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       AllocatedRelaxedR1CSInstance<G>,
       AllocatedR1CSInstance<G>,
       AllocatedPoint<G>,
+      Option<AllocatedPoint<G>>,
+      Option<AllocatedPoint<G>>,
     ),
     SynthesisError,
   > {
@@ -181,7 +193,27 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       }),
     )?;
 
-    Ok((params, i, z_0, z_i, U, u, T))
+    // new
+    let (W0, w0) = if expose_w0 {
+      (Some(
+        AllocatedPoint::alloc(
+            cs.namespace(|| "allocate W0"),
+            self.inputs.get().map_or(None, |inputs| {
+              inputs.W0.get().map_or(None, |W0| Some(W0.to_coordinates()))
+            }),
+          )?
+        ),
+        Some(
+          AllocatedPoint::alloc(
+              cs.namespace(|| "allocate w0"),
+              self.inputs.get().map_or(None, |inputs| {
+                inputs.w0.get().map_or(None, |w0| Some(w0.to_coordinates()))
+              }),
+            )?
+          )
+        )
+      } else {(None, None)};
+    Ok((params, i, z_0, z_i, U, u, T, W0, w0)) // new
   }
 
   /// Synthesizes base case and returns the new relaxed R1CSInstance
@@ -222,12 +254,15 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     U: AllocatedRelaxedR1CSInstance<G>,
     u: AllocatedR1CSInstance<G>,
     T: AllocatedPoint<G>,
+    W0: Option<AllocatedPoint<G>>,  // new
+    w0: Option<AllocatedPoint<G>>,
     arity: usize,
-  ) -> Result<(AllocatedRelaxedR1CSInstance<G>, AllocatedBit), SynthesisError> {
+    expose_w0: bool, // new
+  ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Option<AllocatedPoint<G>>, AllocatedBit), SynthesisError> {
     // Check that u.x[0] = Hash(params, U, i, z0, zi)
     let mut ro = G::ROCircuit::new(
       self.ro_consts.clone(),
-      NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity,
+      NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity + if expose_w0 {6} else {0}, // new - we need 6 additional absorbs for W0 and w0
     );
     ro.absorb(params.clone());
     ro.absorb(i);
@@ -239,6 +274,15 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     }
     U.absorb_in_ro(cs.namespace(|| "absorb U"), &mut ro)?;
 
+    if expose_w0 {  // new
+      ro.absorb(W0.unwrap().x.clone());
+      ro.absorb(W0.unwrap().y.clone());
+      ro.absorb(W0.unwrap().is_infinity.clone());
+      ro.absorb(w0.unwrap().x.clone());
+      ro.absorb(w0.unwrap().y.clone());
+      ro.absorb(w0.unwrap().is_infinity.clone());
+    }
+
     let hash_bits = ro.squeeze(cs.namespace(|| "Input hash"), NUM_HASH_BITS)?;
     let hash = le_bits_to_num(cs.namespace(|| "bits to hash"), hash_bits)?;
     let check_pass = alloc_num_equals(
@@ -248,7 +292,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     )?;
 
     // Run NIFS Verifier
-    let U_fold = U.fold_with_r1cs(
+    let (U_fold, r_bits) = U.fold_with_r1cs(
       cs.namespace(|| "compute fold of U and u"),
       params,
       u,
@@ -257,8 +301,15 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       self.params.limb_width,
       self.params.n_limbs,
     )?;
+    
+    let W0_fold = if expose_w0 { // new - we fold W0 + r w0
+      let rw0 = w0.unwrap().scalar_mul(cs.namespace(|| "r * w0"), r_bits)?;
+      Some(W0.unwrap().add(cs.namespace(|| "W0 + r * w0"), &rw0)?)
+    } else {None};
 
-    Ok((U_fold, check_pass))
+
+
+    Ok((U_fold, W0_fold, check_pass))
   }
 }
 
@@ -270,10 +321,11 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
     cs: &mut CS,
   ) -> Result<(), SynthesisError> {
     let arity = self.step_circuit.arity();
+    let expose_w0 = self.expose_w0;
 
     // Allocate all witnesses
-    let (params, i, z_0, z_i, U, u, T) =
-      self.alloc_witness(cs.namespace(|| "allocate the circuit witness"), arity)?;
+    let (params, i, z_0, z_i, U, u, T, W0, w0) =
+      self.alloc_witness(cs.namespace(|| "allocate the circuit witness"), arity, expose_w0)?;
 
     // Compute variable indicating if this is the base case
     let zero = alloc_zero(cs.namespace(|| "zero"))?;
@@ -284,7 +336,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
 
     // Synthesize the circuit for the non-base case and get the new running
     // instance along with a boolean indicating if all checks have passed
-    let (Unew_non_base, check_non_base_pass) = self.synthesize_non_base_case(
+    let (Unew_non_base, W0new_non_base, check_non_base_pass) = self.synthesize_non_base_case(
       cs.namespace(|| "synthesize non base case"),
       params.clone(),
       i.clone(),
@@ -293,7 +345,10 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
       U,
       u.clone(),
       T,
+      W0,
+      w0,
       arity,
+      expose_w0,
     )?;
 
     // Either check_non_base_pass=true or we are in the base case
@@ -364,12 +419,26 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
       .inputize(cs.namespace(|| "Output unmodified hash of the other circuit"))?;
     hash.inputize(cs.namespace(|| "output new hash of this circuit"))?;
 
+    // new: Outputs X2 which is either X2 provided expose_w0 is false, or Hash(w0, X2) provided expose_w0 is true 
+    let run = if expose_w0 {
+      let mut ro = G::ROCircuit::new(self.ro_consts, 7); // new: it needs to absorb w0 and u.X2. Currently suboptimal, because I'm decomposing u.X2 into bits again
+      ro.absorb(w0.unwrap().x);
+      ro.absorb(w0.unwrap().y);
+      ro.absorb(w0.unwrap().is_infinity);
+      ro.absorb(u.X2);
+      let run_bits = ro.squeeze(cs.namespace(|| "output run bits"), NUM_HASH_BITS)?;
+      le_bits_to_num(cs.namespace(||"convert run bits to num"), run_bits)?
+    } else {u.X2};
+    
+    run.inputize(cs.namespace(|| "output run"));
+
     Ok(())
   }
 }
 
+
 #[cfg(test)]
-mod tests {
+mod tests{
   use super::*;
   use crate::bellperson::{shape_cs::ShapeCS, solver::SatisfyingAssignment};
   type G1 = pasta_curves::pallas::Point;
@@ -381,7 +450,7 @@ mod tests {
     provider::poseidon::PoseidonConstantsCircuit,
     traits::{circuit::TrivialTestCircuit, ROConstantsTrait},
   };
-
+ 
   #[test]
   fn test_recursive_circuit() {
     // In the following we use 1 to refer to the primary, and 2 to refer to the secondary circuit
