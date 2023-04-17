@@ -262,7 +262,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     // Check that u.x[0] = Hash(params, U, i, z0, zi)
     let mut ro = G::ROCircuit::new(
       self.ro_consts.clone(),
-      NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity + if expose_w0 {6} else {0}, // new - we need 6 additional absorbs for W0 and w0
+      NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity + if expose_w0 {3} else {0}, // new - we need 6 additional absorbs for W0 and w0
     );
     ro.absorb(params.clone());
     ro.absorb(i);
@@ -278,9 +278,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       ro.absorb(W0.unwrap().x.clone());
       ro.absorb(W0.unwrap().y.clone());
       ro.absorb(W0.unwrap().is_infinity.clone());
-      ro.absorb(w0.unwrap().x.clone());
-      ro.absorb(w0.unwrap().y.clone());
-      ro.absorb(w0.unwrap().is_infinity.clone());
+
     }
 
     let hash_bits = ro.squeeze(cs.namespace(|| "Input hash"), NUM_HASH_BITS)?;
