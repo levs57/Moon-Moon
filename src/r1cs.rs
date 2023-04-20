@@ -433,7 +433,7 @@ impl<G: Group> R1CSShape<G> {
     let B_padded = apply_pad(&self.B);
     let C_padded = apply_pad(&self.C);
 
-    if self.num_exposed.len() != 0 {
+    if !self.num_exposed.is_empty() {
       unimplemented!("padding for exposed witnesses is not implemented yet!")
     }
 

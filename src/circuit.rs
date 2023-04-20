@@ -365,7 +365,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
     hash.inputize(cs.namespace(|| "output new hash of this circuit"))?;
 
     // Output Hash(W_exposed, X2)
-    let run = if u.run.len() == 0 {
+    let run = if u.run.is_empty() {
       let mut runs = vec![];
       for (w_exposed_i, run_i) in u.W_exposed.iter().zip(u.run.iter()) {
         let mut ro_run = G::ROCircuit::new(self.ro_consts.clone(), 7); // new: it needs to absorb w0 and u.X2. Currently suboptimal, because I'm decomposing u.X2 into bits again
