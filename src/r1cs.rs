@@ -33,6 +33,9 @@ pub struct R1CSShape<G: Group> {
   pub(crate) num_cons: usize,
   pub(crate) num_vars: usize,
   pub(crate) num_io: usize,
+  /// offsets and lengths of the exposed snippets from within the witness
+  /// these index into num_vars and are validated in R1CSWitness::new
+  pub(crate) num_exposed: Vec<(usize, usize)>, //new
   pub(crate) A: Vec<(usize, usize, G::Scalar)>,
   pub(crate) B: Vec<(usize, usize, G::Scalar)>,
   pub(crate) C: Vec<(usize, usize, G::Scalar)>,
@@ -50,6 +53,7 @@ pub struct R1CSWitness<G: Group> {
 #[serde(bound = "")]
 pub struct R1CSInstance<G: Group> {
   pub(crate) comm_W: Commitment<G>,
+  pub(crate) comm_W_exposed: Vec<Commitment<G>>, //new
   pub(crate) X: Vec<G::Scalar>,
 }
 
@@ -65,6 +69,7 @@ pub struct RelaxedR1CSWitness<G: Group> {
 #[serde(bound = "")]
 pub struct RelaxedR1CSInstance<G: Group> {
   pub(crate) comm_W: Commitment<G>,
+  pub(crate) comm_W_exposed: Vec<Commitment<G>>, //new
   pub(crate) comm_E: Commitment<G>,
   pub(crate) X: Vec<G::Scalar>,
   pub(crate) u: G::Scalar,
@@ -86,6 +91,7 @@ impl<G: Group> R1CSShape<G> {
     num_cons: usize,
     num_vars: usize,
     num_io: usize,
+    num_exposed: Vec<(usize, usize)>, //new
     A: &[(usize, usize, G::Scalar)],
     B: &[(usize, usize, G::Scalar)],
     C: &[(usize, usize, G::Scalar)],
@@ -126,12 +132,25 @@ impl<G: Group> R1CSShape<G> {
       return Err(NovaError::OddInputLength);
     }
 
+    // check the validity of the exposed ranges
+    let res_exposed = (0..num_exposed.len())
+      .map(|i| {
+        let (offset, len) = num_exposed[i];
+        if offset + len > num_vars {
+          Err(NovaError::InvalidIndex)
+        } else {
+          Ok(())
+        }
+      })
+      .collect::<Result<Vec<()>, NovaError>>();
+
     let digest = Self::compute_digest(num_cons, num_vars, num_io, A, B, C);
 
     let shape = R1CSShape {
       num_cons,
       num_vars,
       num_io,
+      num_exposed,
       A: A.to_owned(),
       B: B.to_owned(),
       C: C.to_owned(),
@@ -384,6 +403,7 @@ impl<G: Group> R1CSShape<G> {
         num_cons: m,
         num_vars: m,
         num_io: self.num_io,
+        num_exposed: self.num_exposed, 
         A: self.A.clone(),
         B: self.B.clone(),
         C: self.C.clone(),
@@ -410,6 +430,10 @@ impl<G: Group> R1CSShape<G> {
     let B_padded = apply_pad(&self.B);
     let C_padded = apply_pad(&self.C);
 
+    if self.num_exposed.len() != 0 {
+      unimplemented!("padding for exposed witnesses is not implemented yet!")
+    }
+
     let digest = Self::compute_digest(
       num_cons_padded,
       num_vars_padded,
@@ -423,6 +447,7 @@ impl<G: Group> R1CSShape<G> {
       num_cons: num_cons_padded,
       num_vars: num_vars_padded,
       num_io: self.num_io,
+      num_exposed: self.num_exposed,
       A: A_padded,
       B: B_padded,
       C: C_padded,
@@ -464,6 +489,7 @@ impl<G: Group> R1CSInstance<G> {
   pub fn new(
     S: &R1CSShape<G>,
     comm_W: &Commitment<G>,
+    comm_W_exposed: &Vec<Commitment<G>>,
     X: &[G::Scalar],
   ) -> Result<R1CSInstance<G>, NovaError> {
     if S.num_io != X.len() {
@@ -471,6 +497,7 @@ impl<G: Group> R1CSInstance<G> {
     } else {
       Ok(R1CSInstance {
         comm_W: *comm_W,
+        comm_W_exposed: comm_W_exposed.to_owned(),
         X: X.to_owned(),
       })
     }
@@ -556,9 +583,10 @@ impl<G: Group> RelaxedR1CSWitness<G> {
 impl<G: Group> RelaxedR1CSInstance<G> {
   /// Produces a default RelaxedR1CSInstance given R1CSGens and R1CSShape
   pub fn default(_ck: &CommitmentKey<G>, S: &R1CSShape<G>) -> RelaxedR1CSInstance<G> {
-    let (comm_W, comm_E) = (Commitment::<G>::default(), Commitment::<G>::default());
+    let (comm_W, comm_W_exposed,  comm_E) = (Commitment::<G>::default(), vec![], Commitment::<G>::default());
     RelaxedR1CSInstance {
       comm_W,
+      comm_W_exposed,
       comm_E,
       u: G::Scalar::zero(),
       X: vec![G::Scalar::zero(); S.num_io],
@@ -581,10 +609,12 @@ impl<G: Group> RelaxedR1CSInstance<G> {
   /// Initializes a new RelaxedR1CSInstance from an R1CSInstance
   pub fn from_r1cs_instance_unchecked(
     comm_W: &Commitment<G>,
+    comm_W_exposed: &Vec<Commitment<G>>,
     X: &[G::Scalar],
   ) -> RelaxedR1CSInstance<G> {
     RelaxedR1CSInstance {
       comm_W: *comm_W,
+      comm_W_exposed: *comm_W_exposed,
       comm_E: Commitment::<G>::default(),
       u: G::Scalar::one(),
       X: X.to_vec(),
@@ -598,9 +628,9 @@ impl<G: Group> RelaxedR1CSInstance<G> {
     comm_T: &Commitment<G>,
     r: &G::Scalar,
   ) -> Result<RelaxedR1CSInstance<G>, NovaError> {
-    let (X1, u1, comm_W_1, comm_E_1) =
-      (&self.X, &self.u, &self.comm_W.clone(), &self.comm_E.clone());
-    let (X2, comm_W_2) = (&U2.X, &U2.comm_W);
+    let (X1, u1, comm_W_1, comm_W_exposed_1, comm_E_1) =
+      (&self.X, &self.u, &self.comm_W.clone(), &self.comm_W_exposed.clone(), &self.comm_E.clone());
+    let (X2, comm_W_2, comm_W_exposed_2) = (&U2.X, &U2.comm_W, &U2.comm_W_exposed);
 
     // weighted sum of X, comm_W, comm_E, and u
     let X = X1
@@ -609,11 +639,14 @@ impl<G: Group> RelaxedR1CSInstance<G> {
       .map(|(a, b)| *a + *r * *b)
       .collect::<Vec<G::Scalar>>();
     let comm_W = *comm_W_1 + *comm_W_2 * *r;
+    assert!(comm_W_exposed_1.len() == comm_W_exposed_2.len());
+    let comm_W_exposed = comm_W_exposed_1.iter().zip(comm_W_exposed_2.iter()).map(|(a, b)| *a + *b * *r).collect::<Vec<Commitment<G>>>();
     let comm_E = *comm_E_1 + *comm_T * *r;
     let u = *u1 + *r;
 
     Ok(RelaxedR1CSInstance {
       comm_W,
+      comm_W_exposed,
       comm_E,
       X,
       u,

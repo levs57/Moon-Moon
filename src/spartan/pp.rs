@@ -2153,7 +2153,7 @@ impl<G: Group, EE: EvaluationEngineTrait<G, CE = G::CE>, C: StepCircuit<G::Scala
 
     // convert the instance and witness to relaxed form
     let (u_relaxed, w_relaxed) = (
-      RelaxedR1CSInstance::from_r1cs_instance_unchecked(&u.comm_W, &u.X),
+      RelaxedR1CSInstance::from_r1cs_instance_unchecked(&u.comm_W, &u.comm_W_exposed, &u.X),
       RelaxedR1CSWitness::from_r1cs_witness(&pk.S, &w),
     );
 
@@ -2170,7 +2170,7 @@ impl<G: Group, EE: EvaluationEngineTrait<G, CE = G::CE>, C: StepCircuit<G::Scala
   /// Verifies a proof of satisfiability
   pub fn verify(&self, vk: &SpartanVerifierKey<G, EE>, io: &[G::Scalar]) -> Result<(), NovaError> {
     // construct an instance using the provided commitment to the witness and z_i and z_{i+1}
-    let u_relaxed = RelaxedR1CSInstance::from_r1cs_instance_unchecked(&self.comm_W, io);
+    let u_relaxed = RelaxedR1CSInstance::from_r1cs_instance_unchecked(&self.comm_W, &vec![], io);
 
     // verify the snark using the constructed instance
     self.snark.verify(&vk.vk, &u_relaxed)?;

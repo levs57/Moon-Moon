@@ -42,7 +42,7 @@ where
 
     let comm_W = W.commit(ck);
 
-    let instance = R1CSInstance::<G>::new(shape, &comm_W, X)?;
+    let instance = R1CSInstance::<G>::new(shape, &comm_W, &comm_W_exposed, X)?;
 
     Ok((instance, W))
   }

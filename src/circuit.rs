@@ -59,8 +59,6 @@ pub struct NovaAugmentedCircuitInputs<G: Group> {
   U: Option<RelaxedR1CSInstance<G>>,
   u: Option<R1CSInstance<G>>,
   T: Option<Commitment<G>>,
-  W0: Option<Commitment<G>>, // new
-  w0: Option<Commitment<G>>, // new
 }
 
 impl<G: Group> NovaAugmentedCircuitInputs<G> {
@@ -74,8 +72,6 @@ impl<G: Group> NovaAugmentedCircuitInputs<G> {
     U: Option<RelaxedR1CSInstance<G>>,
     u: Option<R1CSInstance<G>>,
     T: Option<Commitment<G>>,
-    W0: Option<Commitment<G>>,
-    w0: Option<Commitment<G>>,
   ) -> Self {
     Self {
       params,
@@ -85,8 +81,6 @@ impl<G: Group> NovaAugmentedCircuitInputs<G> {
       U,
       u,
       T,
-      W0, // new
-      w0, // new
     }
   }
 }
@@ -98,7 +92,6 @@ pub struct NovaAugmentedCircuit<G: Group, SC: StepCircuit<G::Base>> {
   ro_consts: ROConstantsCircuit<G>,
   inputs: Option<NovaAugmentedCircuitInputs<G>>,
   step_circuit: SC, // The function that is applied for each step
-  expose_w0: bool, // new
 }
 
 impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
@@ -108,14 +101,12 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     inputs: Option<NovaAugmentedCircuitInputs<G>>,
     step_circuit: SC,
     ro_consts: ROConstantsCircuit<G>,
-    expose_w0: bool,
   ) -> Self {
     Self {
       params,
       inputs,
       step_circuit,
       ro_consts,
-      expose_w0,
     }
   }
 
@@ -319,7 +310,6 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
     cs: &mut CS,
   ) -> Result<(), SynthesisError> {
     let arity = self.step_circuit.arity();
-    let expose_w0 = self.expose_w0;
 
     // Allocate all witnesses
     let (params, i, z_0, z_i, U, u, T, W0, w0) =
@@ -466,7 +456,6 @@ mod tests{
         None,
         TrivialTestCircuit::default(),
         ro_consts1.clone(),
-        false,
       );
     let mut cs: ShapeCS<G1> = ShapeCS::new();
     let _ = circuit1.synthesize(&mut cs);
@@ -480,7 +469,6 @@ mod tests{
         None,
         TrivialTestCircuit::default(),
         ro_consts2.clone(),
-        true,
       );
     let mut cs: ShapeCS<G2> = ShapeCS::new();
     let _ = circuit2.synthesize(&mut cs);
@@ -499,8 +487,6 @@ mod tests{
       None,
       None,
       None,
-      None,
-      None,
     );
     let circuit1: NovaAugmentedCircuit<G2, TrivialTestCircuit<<G2 as Group>::Base>> =
       NovaAugmentedCircuit::new(
@@ -508,7 +494,6 @@ mod tests{
         Some(inputs1),
         TrivialTestCircuit::default(),
         ro_consts1,
-        false
       );
     let _ = circuit1.synthesize(&mut cs1);
     let (inst1, witness1) = cs1.r1cs_instance_and_witness(&shape1, &ck1).unwrap();
@@ -526,8 +511,6 @@ mod tests{
       None,
       Some(inst1),
       None,
-      Some(Commitment::<G1>::default()),
-      Some(Commitment::<G1>::default()),
     );
     let circuit: NovaAugmentedCircuit<G1, TrivialTestCircuit<<G1 as Group>::Base>> =
       NovaAugmentedCircuit::new(
@@ -535,7 +518,6 @@ mod tests{
         Some(inputs2),
         TrivialTestCircuit::default(),
         ro_consts2,
-        true
       );
     let _ = circuit.synthesize(&mut cs2);
     let (inst2, witness2) = cs2.r1cs_instance_and_witness(&shape2, &ck2).unwrap();

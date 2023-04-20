@@ -73,6 +73,7 @@ impl<G: Group> AllocatedR1CSInstance<G> {
 /// An Allocated Relaxed R1CS Instance
 pub struct AllocatedRelaxedR1CSInstance<G: Group> {
   pub(crate) W: AllocatedPoint<G>,
+  pub(crate) W_exposed: Vec<AllocatedPoint<G>>,
   pub(crate) E: AllocatedPoint<G>,
   pub(crate) u: AllocatedNum<G::Base>,
   pub(crate) X0: BigNat<G::Base>,
@@ -94,6 +95,19 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
         .get()
         .map_or(None, |inst| Some(inst.comm_W.to_coordinates())),
     )?;
+
+    let W_exposed = inst
+      .get()
+      .map_or(vec![], |inst| inst.comm_W_exposed)
+      .iter()
+      .enumerate()
+      .map(|(i, comm)| {
+        AllocatedPoint::alloc(
+          cs.namespace(|| format!("allocate W_exposed[{}]", i)),
+          Some(comm.to_coordinates()),
+        )
+      })
+      .collect::<Result<Vec<_>, _>>()?;
 
     let E = AllocatedPoint::alloc(
       cs.namespace(|| "allocate E"),
@@ -143,8 +157,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
-
-    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2 })
+    Ok(AllocatedRelaxedR1CSInstance { W, W_exposed, E, u, X0, X1, X2 })
   }
 
   /// Allocates the hardcoded default RelaxedR1CSInstance in the circuit.
