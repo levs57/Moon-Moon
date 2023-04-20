@@ -64,6 +64,7 @@ where
   )>,
   inputs: Vec<String>,
   aux: Vec<String>,
+  pub num_exposed: Vec<(usize, usize)>,
 }
 
 fn proc_lc<Scalar: PrimeField>(
@@ -229,6 +230,7 @@ where
       constraints: vec![],
       inputs: vec![String::from("ONE")],
       aux: vec![],
+      num_exposed: vec![],
     }
   }
 }

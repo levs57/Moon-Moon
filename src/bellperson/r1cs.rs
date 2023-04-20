@@ -41,6 +41,7 @@ where
     let X = &self.input_assignment[1..];
 
     let comm_W = W.commit(ck);
+    let comm_W_exposed = W.commit_exposed(ck);
 
     let instance = R1CSInstance::<G>::new(shape, &comm_W, &comm_W_exposed, X)?;
 
@@ -78,7 +79,15 @@ where
 
     let S: R1CSShape<G> = {
       // Don't count One as an input for shape's purposes.
-      let res = R1CSShape::new(num_constraints, num_vars, num_inputs - 1, &A, &B, &C);
+      let res = R1CSShape::new(
+        num_constraints,
+        num_vars,
+        num_inputs - 1,
+        &self.num_exposed,
+        &A,
+        &B,
+        &C,
+      );
       res.unwrap()
     };
 

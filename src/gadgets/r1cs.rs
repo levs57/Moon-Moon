@@ -16,7 +16,7 @@ use crate::{
   traits::{commitment::CommitmentTrait, Group, ROCircuitTrait, ROConstantsCircuit},
 };
 use bellperson::{
-  gadgets::{boolean::Boolean, boolean::AllocatedBit, num::AllocatedNum, Assignment},
+  gadgets::{boolean::AllocatedBit, boolean::Boolean, num::AllocatedNum, Assignment},
   ConstraintSystem, SynthesisError,
 };
 use ff::Field;
@@ -28,7 +28,7 @@ pub struct AllocatedR1CSInstance<G: Group> {
   pub(crate) W_exposed: Vec<AllocatedPoint<G>>,
   pub(crate) X0: AllocatedNum<G::Base>,
   pub(crate) X1: AllocatedNum<G::Base>,
-  pub(crate) X2: AllocatedNum<G::Base>, // new added X2 parameter everywhere. it is a running hash 
+  pub(crate) run: Vec<AllocatedNum<G::Base>>,
 }
 
 impl<G: Group> AllocatedR1CSInstance<G> {
@@ -45,7 +45,7 @@ impl<G: Group> AllocatedR1CSInstance<G> {
 
     let W_exposed = u
       .get()
-      .map_or(None, |u| Some(u.comm_W_exposed))
+      .map_or(None, |u| Some(u.comm_W_exposed.clone()))
       .map(|comm_W_exposed| {
         comm_W_exposed
           .iter()
@@ -53,12 +53,13 @@ impl<G: Group> AllocatedR1CSInstance<G> {
           .map(|(i, c)| {
             AllocatedPoint::alloc(
               cs.namespace(|| format!("allocate W_exposed[{}]", i)),
-              Some(c.to_coordinates().clone()),
+              Some(c.to_coordinates()),
             )
           })
           .collect::<Result<Vec<_>, _>>()
       })
-      .transpose()?.map_or(vec![], |v| v);
+      .transpose()?
+      .map_or(vec![], |v| v);
 
     let X0 = alloc_scalar_as_base::<G, _>(
       cs.namespace(|| "allocate X[0]"),
@@ -68,13 +69,32 @@ impl<G: Group> AllocatedR1CSInstance<G> {
       cs.namespace(|| "allocate X[1]"),
       u.get().map_or(None, |u| Some(u.X[1])),
     )?;
-    let X2 = alloc_scalar_as_base::<G, _>(
-      cs.namespace(|| "allocate X[2]"),
-      u.get().map_or(None, |u| Some(u.X[2])),
-    )?;
 
+    let run = u
+      .get()
+      .map_or(None, |u| Some(u.run.clone()))
+      .map(|run| {
+        run
+          .iter()
+          .enumerate()
+          .map(|(i, run_i)| {
+            alloc_scalar_as_base::<G, _>(
+              cs.namespace(|| format!("allocate run[{}]", i)),
+              Some(*run_i),
+            )
+          })
+          .collect::<Result<Vec<_>, _>>()
+      })
+      .transpose()?
+      .map_or(vec![], |v| v);
 
-    Ok(AllocatedR1CSInstance { W, W_exposed, X0, X1, X2 })
+    Ok(AllocatedR1CSInstance {
+      W,
+      W_exposed,
+      X0,
+      X1,
+      run,
+    })
   }
 
   /// Absorb the provided instance in the RO
@@ -84,7 +104,9 @@ impl<G: Group> AllocatedR1CSInstance<G> {
     ro.absorb(self.W.is_infinity.clone());
     ro.absorb(self.X0.clone());
     ro.absorb(self.X1.clone());
-    ro.absorb(self.X2.clone());
+    for run_i in self.run.iter() {
+      ro.absorb(run_i.clone());
+    }
   }
 }
 
@@ -96,7 +118,7 @@ pub struct AllocatedRelaxedR1CSInstance<G: Group> {
   pub(crate) u: AllocatedNum<G::Base>,
   pub(crate) X0: BigNat<G::Base>,
   pub(crate) X1: BigNat<G::Base>,
-  pub(crate) X2: BigNat<G::Base>,
+  pub(crate) run: Vec<BigNat<G::Base>>,
 }
 
 impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
@@ -116,7 +138,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
 
     let W_exposed = inst
       .get()
-      .map_or(vec![], |inst| inst.comm_W_exposed)
+      .map_or(vec![], |inst| inst.comm_W_exposed.clone())
       .iter()
       .enumerate()
       .map(|(i, comm)| {
@@ -164,18 +186,30 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
-    let X2 = BigNat::alloc_from_nat(
-      cs.namespace(|| "allocate X[2]"),
-      || {
-        Ok(f_to_nat(
-          &inst.clone().map_or(G::Scalar::zero(), |inst| inst.X[2]),
-        ))
-      },
-      limb_width,
-      n_limbs,
-    )?;
+    let run = inst
+      .get()
+      .map_or(vec![], |inst| inst.run.clone())
+      .iter()
+      .enumerate()
+      .map(|(i, run_i)| {
+        BigNat::alloc_from_nat(
+          cs.namespace(|| format!("allocate run[{}]", i)),
+          || Ok(f_to_nat(run_i)),
+          limb_width,
+          n_limbs,
+        )
+      })
+      .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(AllocatedRelaxedR1CSInstance { W, W_exposed, E, u, X0, X1, X2 })
+    Ok(AllocatedRelaxedR1CSInstance {
+      W,
+      W_exposed,
+      E,
+      u,
+      X0,
+      X1,
+      run,
+    })
   }
 
   /// Allocates the hardcoded default RelaxedR1CSInstance in the circuit.
@@ -204,16 +238,18 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
-    let X2 = BigNat::alloc_from_nat(
-      cs.namespace(|| "allocate x_default[2]"),
-      || Ok(f_to_nat(&G::Scalar::zero())),
-      limb_width,
-      n_limbs,
-    )?;
-
     let W_exposed = vec![];
+    let run = vec![];
 
-    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2, W_exposed })
+    Ok(AllocatedRelaxedR1CSInstance {
+      W,
+      E,
+      u,
+      X0,
+      X1,
+      W_exposed,
+      run,
+    })
   }
 
   /// Allocates the R1CS Instance as a RelaxedR1CSInstance in the circuit.
@@ -242,15 +278,21 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
-    let X2 = BigNat::from_num(
-      cs.namespace(|| "allocate X2 from relaxed r1cs"),
-      Num::from(inst.X2.clone()),
-      limb_width,
-      n_limbs,
-    )?;
+    let run = inst
+      .run
+      .iter()
+      .enumerate()
+      .map(|(i, run_i)| {
+        BigNat::from_num(
+          cs.namespace(|| format!("allocate run[{}] from relaxed r1cs", i)),
+          Num::from(run_i.clone()),
+          limb_width,
+          n_limbs,
+        )
+      })
+      .collect::<Result<Vec<_>, _>>()?;
 
     let W_exposed = inst.W_exposed.clone();
-
 
     Ok(AllocatedRelaxedR1CSInstance {
       W: inst.W,
@@ -258,14 +300,12 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       u,
       X0,
       X1,
-      X2,
-      W_exposed
+      run,
+      W_exposed,
     })
   }
 
-  pub fn get_absorbs_from_W_exposed(
-    &self,
-  ) -> usize {
+  pub fn get_absorbs_from_W_exposed(&self) -> usize {
     self.W_exposed.len() * 3
   }
 
@@ -283,12 +323,12 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     ro.absorb(self.E.is_infinity.clone());
     ro.absorb(self.u.clone());
 
-    for (i, w_i) in self.W_exposed.iter().enumerate() {
+    for w_i in self.W_exposed.iter() {
       ro.absorb(w_i.x.clone());
       ro.absorb(w_i.y.clone());
       ro.absorb(w_i.is_infinity.clone());
     }
-    
+
     // Analyze X0 as limbs
     let X0_bn = self
       .X0
@@ -321,19 +361,28 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       ro.absorb(limb);
     }
 
-    let X2_bn = self
-      .X2
-      .as_limbs::<CS>()
+    let run_bn = self
+      .run
       .iter()
       .enumerate()
-      .map(|(i, limb)| {
-        limb.as_allocated_num(cs.namespace(|| format!("convert limb {i} of X_r[2] to num")))
+      .map(|(i, run_i)| {
+        run_i
+          .as_limbs::<CS>()
+          .iter()
+          .enumerate()
+          .map(|(j, limb)| {
+            limb.as_allocated_num(
+              cs.namespace(|| format!("convert limb {j} of X_r[run[{}]] to num", i)),
+            )
+          })
+          .collect::<Result<Vec<AllocatedNum<G::Base>>, _>>()
       })
-      .collect::<Result<Vec<AllocatedNum<G::Base>>, _>>()?;
+      .collect::<Result<Vec<Vec<AllocatedNum<G::Base>>>, _>>()?;
 
-    // absorb each of the limbs of X[2]
-    for limb in X2_bn.into_iter() {
-      ro.absorb(limb);
+    for run_i in run_bn.into_iter() {
+      for limb in run_i.into_iter() {
+        ro.absorb(limb);
+      }
     }
 
     Ok(())
@@ -350,7 +399,8 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     ro_consts: ROConstantsCircuit<G>,
     limb_width: usize,
     n_limbs: usize,
-  ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Vec<AllocatedBit>), SynthesisError> {  // new - this is messy, I will just return r so I can use it later
+  ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Vec<AllocatedBit>), SynthesisError> {
+    // new - this is messy, I will just return r so I can use it later
     // Compute r:
     let mut ro = G::ROCircuit::new(ro_consts, NUM_FE_FOR_RO);
     ro.absorb(params);
@@ -367,7 +417,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     let W_fold = self.W.add(cs.namespace(|| "self.W + r * u.W"), &rW)?;
 
     // E_fold = self.E + r * T
-    let rT = T.scalar_mul(cs.namespace(|| "r * T"), r_bits)?;
+    let rT = T.scalar_mul(cs.namespace(|| "r * T"), r_bits.clone())?;
     let E_fold = self.E.add(cs.namespace(|| "self.E + r * T"), &rT)?;
 
     // u_fold = u_r + r
@@ -428,40 +478,43 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     // Now reduce
     let X1_fold = r_new_1.red_mod(cs.namespace(|| "reduce folded X[1]"), &m_bn)?;
 
-    // Analyze X2 to bignat
-    let X2_bn = BigNat::from_num(
-      cs.namespace(|| "allocate X2_bn"),
-      Num::from(u.X2.clone()),
-      limb_width,
-      n_limbs,
-    )?;
-
-    // Fold self.X[2] + r * X[2]
-    let (_, r_2) = X2_bn.mult_mod(cs.namespace(|| "r*X[2]"), &r_bn, &m_bn)?;
-    // add X_r[1]
-    let r_new_2 = self.X2.add::<CS>(&r_2)?;
-    // Now reduce
-    let X2_fold = r_new_2.red_mod(cs.namespace(|| "reduce folded X[2]"), &m_bn)?;
+    assert_eq!(self.W_exposed.len(), u.W_exposed.len());
 
     let W_exposed_fold = // new - we fold W0 + r w0
-      u.W_exposed.iter().zip(self.W_exposed.iter(), |new_W_exposed, old_W_exposed| {
+      u.W_exposed.iter().zip(self.W_exposed.iter()).map(|(new_W_exposed, old_W_exposed)| {
         let r_w_exposed = new_W_exposed.scalar_mul(cs.namespace(|| "r * w_exposed"), r_bits.clone())?;
-        r_w_exposed.add(cs.namespace(|| "old_W_exposed + r * new_w_exposed"), &old_W_exposed)
+        r_w_exposed.add(cs.namespace(|| "old_W_exposed + r * new_w_exposed"), old_W_exposed)
       }).collect::<Result<Vec<_>, _>>()?;
 
-
-    Ok((Self {
-          W: W_fold,
-          W_exposed: W_exposed_fold,
-          E: E_fold,
-          u: u_fold,
-          X0: X0_fold,
-          X1: X1_fold,
-          X2: X2_fold,
-        },
-        r_bits
-      )
-    )
+    let run_fold = {
+      let mut run_fold = Vec::with_capacity(self.run.len());
+      for (self_run_i, u_run_i) in self.run.iter().zip(u.run.iter()) {
+        let u_run_i_bn = BigNat::from_num(
+          cs.namespace(|| "allocate X1_bn"),
+          Num::from(u_run_i.clone()),
+          limb_width,
+          n_limbs,
+        )?;
+        let (_, r_run) = u_run_i_bn.mult_mod(cs.namespace(|| "r*u.run[i]"), &r_bn, &m_bn)?;
+        let r_new_1 = self_run_i.add::<CS>(&r_run)?;
+        // Now reduce
+        let run_fold_i = r_new_1.red_mod(cs.namespace(|| "reduce folded X[1]"), &m_bn)?;
+        run_fold.push(run_fold_i);
+      }
+      run_fold
+    };
+    Ok((
+      Self {
+        W: W_fold,
+        W_exposed: W_exposed_fold,
+        E: E_fold,
+        u: u_fold,
+        X0: X0_fold,
+        X1: X1_fold,
+        run: run_fold,
+      },
+      r_bits,
+    ))
   }
 
   /// If the condition is true then returns this otherwise it returns the other
@@ -477,6 +530,20 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       &other.W,
       condition,
     )?;
+
+    let W_exposed = self
+      .W_exposed
+      .iter()
+      .zip(other.W_exposed.iter())
+      .map(|(self_W_exposed, other_W_exposed)| {
+        AllocatedPoint::conditionally_select(
+          cs.namespace(|| "W_exposed = cond ? self.W_exposed : other.W_exposed"),
+          self_W_exposed,
+          other_W_exposed,
+          condition,
+        )
+      })
+      .collect::<Result<Vec<_>, _>>()?;
 
     let E = AllocatedPoint::conditionally_select(
       cs.namespace(|| "E = cond ? self.E : other.E"),
@@ -506,13 +573,28 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       condition,
     )?;
 
-    let X2 = conditionally_select_bignat(
-      cs.namespace(|| "X[2] = cond ? self.X[2] : other.X[2]"),
-      &self.X2,
-      &other.X2,
-      condition,
-    )?;
+    let run = self
+      .run
+      .iter()
+      .zip(other.run.iter())
+      .map(|(self_run, other_run)| {
+        conditionally_select_bignat(
+          cs.namespace(|| "run = cond ? self.run : other.run"),
+          self_run,
+          other_run,
+          condition,
+        )
+      })
+      .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2 })
+    Ok(AllocatedRelaxedR1CSInstance {
+      W,
+      W_exposed,
+      E,
+      u,
+      X0,
+      X1,
+      run,
+    })
   }
 }

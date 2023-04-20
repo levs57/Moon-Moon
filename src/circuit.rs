@@ -181,7 +181,6 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       }),
     )?;
 
-
     Ok((params, i, z_0, z_i, U, u, T)) // new
   }
 
@@ -240,7 +239,6 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     }
     U.absorb_in_ro(cs.namespace(|| "absorb U"), &mut ro)?;
 
-
     let hash_bits = ro.squeeze(cs.namespace(|| "Input hash"), NUM_HASH_BITS)?;
     let hash = le_bits_to_num(cs.namespace(|| "bits to hash"), hash_bits)?;
     let check_pass = alloc_num_equals(
@@ -250,7 +248,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     )?;
 
     // Run NIFS Verifier
-    let (U_fold, r_bits) = U.fold_with_r1cs(
+    let (U_fold, _r_bits) = U.fold_with_r1cs(
       cs.namespace(|| "compute fold of U and u"),
       params,
       u,
@@ -348,7 +346,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
     }
 
     // Compute the new hash H(params, Unew, i+1, z0, z_{i+1})
-    let mut ro = G::ROCircuit::new(self.ro_consts, NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity);
+    let mut ro = G::ROCircuit::new(self.ro_consts.clone(), NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity);
     ro.absorb(params);
     ro.absorb(i_new.clone());
     for e in z_0 {
@@ -366,28 +364,37 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
       .inputize(cs.namespace(|| "Output unmodified hash of the other circuit"))?;
     hash.inputize(cs.namespace(|| "output new hash of this circuit"))?;
 
-    // new: Outputs X2 which is either X2 provided expose_w0 is false, or Hash(w0, X2) provided expose_w0 is true 
-    let run = if expose_w0 {
-      let mut ro_run = G::ROCircuit::new(self.ro_consts, 7); // new: it needs to absorb w0 and u.X2. Currently suboptimal, because I'm decomposing u.X2 into bits again
-      ro_run.absorb(w0.unwrap().x);
-      ro_run.absorb(w0.unwrap().y);
-      ro_run.absorb(w0.unwrap().is_infinity);
-      ro_run.absorb(u.X2);
-      let run_bits = ro.squeeze(cs.namespace(|| "output run bits"), NUM_HASH_BITS)?;
-      le_bits_to_num(cs.namespace(||"convert run bits to num"), run_bits)?
-    } else {u.X2};
-    
-    // new ?
+    // Output Hash(W_exposed, X2)
+    let run = if u.run.len() == 0 {
+      let mut runs = vec![];
+      for (w_exposed_i, run_i) in u.W_exposed.iter().zip(u.run.iter()) {
+        let mut ro_run = G::ROCircuit::new(self.ro_consts.clone(), 7); // new: it needs to absorb w0 and u.X2. Currently suboptimal, because I'm decomposing u.X2 into bits again
+        ro_run.absorb(w_exposed_i.x.clone());
+        ro_run.absorb(w_exposed_i.y.clone());
+        ro_run.absorb(w_exposed_i.is_infinity.clone());
 
-    run.inputize(cs.namespace(|| "output run"));
+        ro_run.absorb(run_i.clone());
+        let run_bits = ro.squeeze(cs.namespace(|| "output run bits"), NUM_HASH_BITS)?;
+        runs.push(le_bits_to_num(
+          cs.namespace(|| "convert run bits to num"),
+          run_bits,
+        )?);
+      }
+      runs
+    } else {
+      u.run
+    };
+
+    for (i, run_i) in run.iter().enumerate() {
+      run_i.inputize(cs.namespace(|| format!("output run {}", i)))?;
+    }
 
     Ok(())
   }
 }
 
-
 #[cfg(test)]
-mod tests{
+mod tests {
   use super::*;
   use crate::bellperson::{shape_cs::ShapeCS, solver::SatisfyingAssignment};
   type G1 = pasta_curves::pallas::Point;
@@ -399,7 +406,7 @@ mod tests{
     provider::poseidon::PoseidonConstantsCircuit,
     traits::{circuit::TrivialTestCircuit, ROConstantsTrait},
   };
- 
+
   #[test]
   fn test_recursive_circuit() {
     // In the following we use 1 to refer to the primary, and 2 to refer to the secondary circuit
@@ -433,7 +440,7 @@ mod tests{
     let _ = circuit2.synthesize(&mut cs);
     let (shape2, ck2) = cs.r1cs_shape();
     println!("number of constraints: {}", cs.num_constraints());
-//    assert_eq!(cs.num_constraints(), 10347);
+    //    assert_eq!(cs.num_constraints(), 10347);
 
     // Execute the base case for the primary
     let zero1 = <<G2 as Group>::Base as Field>::zero();
