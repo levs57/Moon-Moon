@@ -115,7 +115,6 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     &self,
     mut cs: CS,
     arity: usize,
-    expose_w0: bool, // new - this bool value will be equal to not(is_primary_circuit), it determines whether we need to allocate W0, w0
   ) -> Result<
     (
       AllocatedNum<G::Base>,
@@ -125,8 +124,6 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       AllocatedRelaxedR1CSInstance<G>,
       AllocatedR1CSInstance<G>,
       AllocatedPoint<G>,
-      Option<AllocatedPoint<G>>,
-      Option<AllocatedPoint<G>>,
     ),
     SynthesisError,
   > {
@@ -184,27 +181,8 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       }),
     )?;
 
-    // new
-    let (W0, w0) = if expose_w0 {
-      (Some(
-        AllocatedPoint::alloc(
-            cs.namespace(|| "allocate W0"),
-            self.inputs.get().map_or(None, |inputs| {
-              inputs.W0.get().map_or(None, |W0| Some(W0.to_coordinates()))
-            }),
-          )?
-        ),
-        Some(
-          AllocatedPoint::alloc(
-              cs.namespace(|| "allocate w0"),
-              self.inputs.get().map_or(None, |inputs| {
-                inputs.w0.get().map_or(None, |w0| Some(w0.to_coordinates()))
-              }),
-            )?
-          )
-        )
-      } else {(None, None)};
-    Ok((params, i, z_0, z_i, U, u, T, W0, w0)) // new
+
+    Ok((params, i, z_0, z_i, U, u, T)) // new
   }
 
   /// Synthesizes base case and returns the new relaxed R1CSInstance
@@ -245,10 +223,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     U: AllocatedRelaxedR1CSInstance<G>,
     u: AllocatedR1CSInstance<G>,
     T: AllocatedPoint<G>,
-    W0: Option<AllocatedPoint<G>>,  // new
-    w0: Option<AllocatedPoint<G>>,
     arity: usize,
-    expose_w0: bool, // new
   ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Option<AllocatedPoint<G>>, AllocatedBit), SynthesisError> {
     // Check that u.x[0] = Hash(params, U, i, z0, zi)
     let mut ro = G::ROCircuit::new(
@@ -312,8 +287,8 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
     let arity = self.step_circuit.arity();
 
     // Allocate all witnesses
-    let (params, i, z_0, z_i, U, u, T, W0, w0) =
-      self.alloc_witness(cs.namespace(|| "allocate the circuit witness"), arity, expose_w0)?;
+    let (params, i, z_0, z_i, U, u, T) =
+      self.alloc_witness(cs.namespace(|| "allocate the circuit witness"), arity)?;
 
     // Compute variable indicating if this is the base case
     let zero = alloc_zero(cs.namespace(|| "zero"))?;
@@ -333,10 +308,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
       U,
       u.clone(),
       T,
-      W0,
-      w0,
       arity,
-      expose_w0,
     )?;
 
     // Either check_non_base_pass=true or we are in the base case

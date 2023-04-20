@@ -25,6 +25,7 @@ use ff::Field;
 #[derive(Clone)]
 pub struct AllocatedR1CSInstance<G: Group> {
   pub(crate) W: AllocatedPoint<G>,
+  pub(crate) W_exposed: Vec<AllocatedPoint<G>>,
   pub(crate) X0: AllocatedNum<G::Base>,
   pub(crate) X1: AllocatedNum<G::Base>,
   pub(crate) X2: AllocatedNum<G::Base>, // new added X2 parameter everywhere. it is a running hash 
@@ -42,6 +43,23 @@ impl<G: Group> AllocatedR1CSInstance<G> {
       u.get().map_or(None, |u| Some(u.comm_W.to_coordinates())),
     )?;
 
+    let W_exposed = u
+      .get()
+      .map_or(None, |u| Some(u.comm_W_exposed))
+      .map(|comm_W_exposed| {
+        comm_W_exposed
+          .iter()
+          .enumerate()
+          .map(|(i, c)| {
+            AllocatedPoint::alloc(
+              cs.namespace(|| format!("allocate W_exposed[{}]", i)),
+              Some(c.to_coordinates().clone()),
+            )
+          })
+          .collect::<Result<Vec<_>, _>>()
+      })
+      .transpose()?.map_or(vec![], |v| v);
+
     let X0 = alloc_scalar_as_base::<G, _>(
       cs.namespace(|| "allocate X[0]"),
       u.get().map_or(None, |u| Some(u.X[0])),
@@ -56,7 +74,7 @@ impl<G: Group> AllocatedR1CSInstance<G> {
     )?;
 
 
-    Ok(AllocatedR1CSInstance { W, X0, X1, X2 })
+    Ok(AllocatedR1CSInstance { W, W_exposed, X0, X1, X2 })
   }
 
   /// Absorb the provided instance in the RO
@@ -193,7 +211,9 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
-    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2 })
+    let W_exposed = vec![];
+
+    Ok(AllocatedRelaxedR1CSInstance { W, E, u, X0, X1, X2, W_exposed })
   }
 
   /// Allocates the R1CS Instance as a RelaxedR1CSInstance in the circuit.
@@ -229,6 +249,8 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       n_limbs,
     )?;
 
+    let W_exposed = inst.W_exposed.clone();
+
 
     Ok(AllocatedRelaxedR1CSInstance {
       W: inst.W,
@@ -237,6 +259,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
       X0,
       X1,
       X2,
+      W_exposed
     })
   }
 
