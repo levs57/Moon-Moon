@@ -224,11 +224,11 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     u: AllocatedR1CSInstance<G>,
     T: AllocatedPoint<G>,
     arity: usize,
-  ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Option<AllocatedPoint<G>>, AllocatedBit), SynthesisError> {
+  ) -> Result<(AllocatedRelaxedR1CSInstance<G>, AllocatedBit), SynthesisError> {
     // Check that u.x[0] = Hash(params, U, i, z0, zi)
     let mut ro = G::ROCircuit::new(
       self.ro_consts.clone(),
-      NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity + if expose_w0 {3} else {0}, // new - we need 6 additional absorbs for W0 and w0
+      NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity + U.get_absorbs_from_W_exposed(), // new - we need 6 additional absorbs for W0 and w0
     );
     ro.absorb(params.clone());
     ro.absorb(i);
@@ -240,12 +240,6 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     }
     U.absorb_in_ro(cs.namespace(|| "absorb U"), &mut ro)?;
 
-    if expose_w0 {  // new
-      ro.absorb(W0.unwrap().x.clone());
-      ro.absorb(W0.unwrap().y.clone());
-      ro.absorb(W0.unwrap().is_infinity.clone());
-
-    }
 
     let hash_bits = ro.squeeze(cs.namespace(|| "Input hash"), NUM_HASH_BITS)?;
     let hash = le_bits_to_num(cs.namespace(|| "bits to hash"), hash_bits)?;
@@ -265,15 +259,8 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
       self.params.limb_width,
       self.params.n_limbs,
     )?;
-    
-    let W0_fold = if expose_w0 { // new - we fold W0 + r w0
-      let rw0 = w0.unwrap().scalar_mul(cs.namespace(|| "r * w0"), r_bits)?;
-      Some(W0.unwrap().add(cs.namespace(|| "W0 + r * w0"), &rw0)?)
-    } else {None};
 
-
-
-    Ok((U_fold, W0_fold, check_pass))
+    Ok((U_fold, check_pass))
   }
 }
 
@@ -299,7 +286,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
 
     // Synthesize the circuit for the non-base case and get the new running
     // instance along with a boolean indicating if all checks have passed
-    let (Unew_non_base, W0new_non_base, check_non_base_pass) = self.synthesize_non_base_case(
+    let (Unew_non_base, check_non_base_pass) = self.synthesize_non_base_case(
       cs.namespace(|| "synthesize non base case"),
       params.clone(),
       i.clone(),
@@ -381,11 +368,11 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
 
     // new: Outputs X2 which is either X2 provided expose_w0 is false, or Hash(w0, X2) provided expose_w0 is true 
     let run = if expose_w0 {
-      let mut ro = G::ROCircuit::new(self.ro_consts, 7); // new: it needs to absorb w0 and u.X2. Currently suboptimal, because I'm decomposing u.X2 into bits again
-      ro.absorb(w0.unwrap().x);
-      ro.absorb(w0.unwrap().y);
-      ro.absorb(w0.unwrap().is_infinity);
-      ro.absorb(u.X2);
+      let mut ro_run = G::ROCircuit::new(self.ro_consts, 7); // new: it needs to absorb w0 and u.X2. Currently suboptimal, because I'm decomposing u.X2 into bits again
+      ro_run.absorb(w0.unwrap().x);
+      ro_run.absorb(w0.unwrap().y);
+      ro_run.absorb(w0.unwrap().is_infinity);
+      ro_run.absorb(u.X2);
       let run_bits = ro.squeeze(cs.namespace(|| "output run bits"), NUM_HASH_BITS)?;
       le_bits_to_num(cs.namespace(||"convert run bits to num"), run_bits)?
     } else {u.X2};

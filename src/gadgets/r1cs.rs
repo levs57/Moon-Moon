@@ -263,6 +263,12 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     })
   }
 
+  pub fn get_absorbs_from_W_exposed(
+    &self,
+  ) -> usize {
+    self.W_exposed.len() * 3
+  }
+
   /// Absorb the provided instance in the RO
   pub fn absorb_in_ro<CS: ConstraintSystem<<G as Group>::Base>>(
     &self,
@@ -277,6 +283,12 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     ro.absorb(self.E.is_infinity.clone());
     ro.absorb(self.u.clone());
 
+    for (i, w_i) in self.W_exposed.iter().enumerate() {
+      ro.absorb(w_i.x.clone());
+      ro.absorb(w_i.y.clone());
+      ro.absorb(w_i.is_infinity.clone());
+    }
+    
     // Analyze X0 as limbs
     let X0_bn = self
       .X0
@@ -431,16 +443,22 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     // Now reduce
     let X2_fold = r_new_2.red_mod(cs.namespace(|| "reduce folded X[2]"), &m_bn)?;
 
+    let W_exposed_fold = // new - we fold W0 + r w0
+      u.W_exposed.iter().zip(self.W_exposed.iter(), |new_W_exposed, old_W_exposed| {
+        let r_w_exposed = new_W_exposed.scalar_mul(cs.namespace(|| "r * w_exposed"), r_bits.clone())?;
+        r_w_exposed.add(cs.namespace(|| "old_W_exposed + r * new_w_exposed"), &old_W_exposed)
+      }).collect::<Result<Vec<_>, _>>()?;
 
 
     Ok((Self {
           W: W_fold,
+          W_exposed: W_exposed_fold,
           E: E_fold,
           u: u_fold,
           X0: X0_fold,
           X1: X1_fold,
           X2: X2_fold,
-        }, 
+        },
         r_bits
       )
     )
