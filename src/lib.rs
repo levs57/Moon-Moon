@@ -32,7 +32,7 @@ use crate::bellperson::{
 };
 use ::bellperson::{Circuit, ConstraintSystem};
 use circuit::{NovaAugmentedCircuit, NovaAugmentedCircuitInputs, NovaAugmentedCircuitParams};
-use constants::{BN_LIMB_WIDTH, BN_N_LIMBS, NUM_FE_WITHOUT_IO_FOR_CRHF, NUM_HASH_BITS};
+use constants::{BN_LIMB_WIDTH, BN_N_LIMBS, NUM_FE_WITHOUT_IO_FOR_CRHF_COMPILER_GET_MAD, NUM_HASH_BITS};
 use core::marker::PhantomData;
 use errors::NovaError;
 use ff::Field;
@@ -150,6 +150,13 @@ where
     (
       self.r1cs_shape_primary.num_vars,
       self.r1cs_shape_secondary.num_vars,
+    )
+  }
+
+  pub fn num_exposed(&self) -> (usize, usize) {
+    (
+      self.r1cs_shape_primary.num_exposed.len(),
+      self.r1cs_shape_secondary.num_exposed.len(),
     )
   }
 }
@@ -409,10 +416,14 @@ where
     }
 
     // check if the output hashes in R1CS instances point to the right running instances
+
+    let (num_exposed_primary, num_exposed_secondary) = pp.num_exposed();
+    let num_runs = num_exposed_primary + num_exposed_secondary;
+
     let (hash_primary, hash_secondary) = {
       let mut hasher = <G2 as Group>::RO::new(
         pp.ro_consts_secondary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_primary + 7,
+        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_primary + BN_N_LIMBS * num_runs + 3 * num_exposed_secondary,
       );
       hasher.absorb(scalar_as_base::<G2>(pp.r1cs_shape_secondary.get_digest()));
       hasher.absorb(G1::Scalar::from(num_steps as u64));
@@ -422,11 +433,11 @@ where
       for e in &self.zi_primary {
         hasher.absorb(*e);
       }
-      self.r_U_secondary.absorb_in_ro(&mut hasher);
+      self.r_U_secondary.absorb_in_ro(&mut hasher); //this will absorb comm_W, X, run
 
       let mut hasher2 = <G1 as Group>::RO::new(
         pp.ro_consts_primary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_secondary + 7,
+        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_secondary + BN_N_LIMBS * num_runs + 3 * num_exposed_primary,
       );
       hasher2.absorb(scalar_as_base::<G1>(pp.r1cs_shape_primary.get_digest()));
       hasher2.absorb(G2::Scalar::from(num_steps as u64));

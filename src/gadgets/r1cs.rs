@@ -102,6 +102,11 @@ impl<G: Group> AllocatedR1CSInstance<G> {
     ro.absorb(self.W.x.clone());
     ro.absorb(self.W.y.clone());
     ro.absorb(self.W.is_infinity.clone());
+    for W_exposed_i in self.W_exposed.iter() {
+      ro.absorb(W_exposed_i.x.clone());
+      ro.absorb(W_exposed_i.y.clone());
+      ro.absorb(W_exposed_i.is_infinity.clone());
+    }
     ro.absorb(self.X0.clone());
     ro.absorb(self.X1.clone());
     for run_i in self.run.iter() {
@@ -309,6 +314,10 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     self.W_exposed.len() * 3
   }
 
+  pub fn get_absorbs_from_run(&self) -> usize {
+    self.run.len() * 4
+  }
+
   /// Absorb the provided instance in the RO
   pub fn absorb_in_ro<CS: ConstraintSystem<<G as Group>::Base>>(
     &self,
@@ -321,13 +330,13 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     ro.absorb(self.E.x.clone());
     ro.absorb(self.E.y.clone());
     ro.absorb(self.E.is_infinity.clone());
-    ro.absorb(self.u.clone());
+    ro.absorb(self.u.clone()); //7
 
     for w_i in self.W_exposed.iter() {
       ro.absorb(w_i.x.clone());
       ro.absorb(w_i.y.clone());
       ro.absorb(w_i.is_infinity.clone());
-    }
+    } //7+3*W_exposed.len()
 
     // Analyze X0 as limbs
     let X0_bn = self
@@ -343,7 +352,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     // absorb each of the limbs of X[0]
     for limb in X0_bn.into_iter() {
       ro.absorb(limb);
-    }
+    } //11+3*W_exposed.len()
 
     // Analyze X1 as limbs
     let X1_bn = self
@@ -359,7 +368,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     // absorb each of the limbs of X[1]
     for limb in X1_bn.into_iter() {
       ro.absorb(limb);
-    }
+    } //15+3*W_exposed.len()
 
     let run_bn = self
       .run

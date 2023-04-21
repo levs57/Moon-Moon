@@ -531,10 +531,16 @@ impl<G: Group> R1CSInstance<G> {
 impl<G: Group> AbsorbInROTrait<G> for R1CSInstance<G> {
   fn absorb_in_ro(&self, ro: &mut G::RO) {
     self.comm_W.absorb_in_ro(ro);
+    for comm_W_exposed_i in self.comm_W_exposed{
+      comm_W_exposed_i.absorb_in_ro(ro);
+    }
     for x in &self.X {
       ro.absorb(scalar_as_base::<G>(*x));
     }
-  }
+    for run_i in &self.run {
+      ro.absorb(scalar_as_base::<G>(*run_i));
+    }
+  } // to ensure that this is on parity with Claudia's code in gadgets/r1cs.rs, we absorb in the order W-W_exposed-x-run
 }
 
 impl<G: Group> RelaxedR1CSWitness<G> {
@@ -737,8 +743,13 @@ impl<G: Group> TranscriptReprTrait<G> for RelaxedR1CSInstance<G> {
 impl<G: Group> AbsorbInROTrait<G> for RelaxedR1CSInstance<G> {
   fn absorb_in_ro(&self, ro: &mut G::RO) {
     self.comm_W.absorb_in_ro(ro);
+
     self.comm_E.absorb_in_ro(ro);
     ro.absorb(scalar_as_base::<G>(self.u));
+
+    for comm_W_exposed_i in self.comm_W_exposed{
+      comm_W_exposed_i.absorb_in_ro(ro);
+    } //to keep parity with Claudia's code in gadgets/r1cs.rs we ensure that absorbtion is in the order W-E-u-W_exposed-x-run
 
     // absorb each element of self.X in bignum format
     for x in &self.X {
@@ -747,5 +758,12 @@ impl<G: Group> AbsorbInROTrait<G> for RelaxedR1CSInstance<G> {
         ro.absorb(scalar_as_base::<G>(limb));
       }
     }
+    for run_i in &self.run {
+      let limbs: Vec<G::Scalar> = nat_to_limbs(&f_to_nat(run_i), BN_LIMB_WIDTH, BN_N_LIMBS).unwrap();
+      for limb in limbs {
+        ro.absorb(scalar_as_base::<G>(limb));
+      }
+    }
+
   }
 }
