@@ -4,7 +4,7 @@ use super::nonnative::{
   util::{f_to_nat, Num},
 };
 use crate::{
-  constants::{NUM_CHALLENGE_BITS, NUM_FE_FOR_RO},
+  constants::{NUM_CHALLENGE_BITS, NUM_FE_FOR_RO, BN_N_LIMBS},
   gadgets::{
     ecc::AllocatedPoint,
     utils::{
@@ -315,7 +315,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
   }
 
   pub fn get_absorbs_from_run(&self) -> usize {
-    self.run.len() * 4
+    self.run.len() * BN_N_LIMBS
   }
 
   /// Absorb the provided instance in the RO
