@@ -412,7 +412,7 @@ where
     let (hash_primary, hash_secondary) = {
       let mut hasher = <G2 as Group>::RO::new(
         pp.ro_consts_secondary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_primary,
+        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_primary + 7,
       );
       hasher.absorb(scalar_as_base::<G2>(pp.r1cs_shape_secondary.get_digest()));
       hasher.absorb(G1::Scalar::from(num_steps as u64));
@@ -426,7 +426,7 @@ where
 
       let mut hasher2 = <G1 as Group>::RO::new(
         pp.ro_consts_primary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_secondary,
+        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_secondary + 7,
       );
       hasher2.absorb(scalar_as_base::<G1>(pp.r1cs_shape_primary.get_digest()));
       hasher2.absorb(G2::Scalar::from(num_steps as u64));
@@ -459,6 +459,7 @@ where
               &pp.ck_primary,
               &self.r_U_primary,
               &self.r_W_primary,
+
             )
           },
           || {
@@ -487,11 +488,17 @@ where
       },
     );
 
+    let res_run_primary = rayon::join(
+      || {
+        COMPILER_GET_ANGRY_HERE
+      });
+
     // check the returned res objects
     res_r_primary?;
     res_l_primary?;
     res_r_secondary?;
     res_l_secondary?;
+    res_run_primary?;
 
     Ok((self.zi_primary.clone(), self.zi_secondary.clone()))
   }
