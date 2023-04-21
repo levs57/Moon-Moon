@@ -270,8 +270,11 @@ impl<G: Group> R1CSShape<G> {
 
     // verify if comm_W is a commitment to W
     let res_comm: bool = U.comm_W == CE::<G>::commit(ck, &W.W);
+    
+    // check w_exposed
+    let res_w_exposed_comm = U.comm_W_exposed.iter().zip(W.commit_exposed(ck).iter()).all(|(a,b)| a==b);
 
-    if res_eq && res_comm {
+    if res_eq && res_comm && res_w_exposed_comm {
       Ok(())
     } else {
       Err(NovaError::UnSat)
