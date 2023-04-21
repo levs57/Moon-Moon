@@ -63,6 +63,7 @@ pub struct R1CSInstance<G: Group> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelaxedR1CSWitness<G: Group> {
   pub(crate) W: Vec<G::Scalar>,
+  pub(crate) num_exposed: Vec<(usize, usize)>, //new
   pub(crate) E: Vec<G::Scalar>,
 }
 
@@ -233,7 +234,9 @@ impl<G: Group> R1CSShape<G> {
       U.comm_W == comm_W && U.comm_E == comm_E
     };
 
-    if res_eq && res_comm {
+    let res_w_exposed_comm = U.comm_W_exposed.iter().zip(W.commit_exposed(ck).iter()).all(|(a,b)| a==b);
+ 
+    if res_eq && res_comm && res_w_exposed_comm {
       Ok(())
     } else {
       Err(NovaError::UnSat)
@@ -488,15 +491,14 @@ impl<G: Group> R1CSWitness<G> {
   pub fn commit(&self, ck: &CommitmentKey<G>) -> Commitment<G> {
     CE::<G>::commit(ck, &self.W)
   }
-
+  
   pub fn commit_exposed(&self, ck: &CommitmentKey<G>) -> Vec<Commitment<G>> {
     let mut commitments = vec![];
     // mask everything that's not exposed to zero
-    for i in 0..self.num_exposed.len() {
-      let start_ind = self.num_exposed[i].0;
-      let end_ind = self.num_exposed[i].0 + self.num_exposed[i].1;
-      let commitment_i = CE::<G>::commit(ck, &self.W[start_ind..end_ind]);
-      commitments.push(commitment_i);
+    for (offset, len) in self.num_exposed.iter() {
+      let mut W_exposed_i = vec![G::Scalar::zero(); *len];
+      W_exposed_i.copy_from_slice(&self.W[*offset..(*offset + *len)]);
+      commitments.push(CE::<G>::commit(ck, &W_exposed_i));
     }
     commitments
   }
@@ -538,6 +540,7 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     RelaxedR1CSWitness {
       W: vec![G::Scalar::zero(); S.num_vars],
       E: vec![G::Scalar::zero(); S.num_cons],
+      num_exposed: S.num_exposed.clone(),
     }
   }
 
@@ -546,6 +549,7 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     RelaxedR1CSWitness {
       W: witness.W.clone(),
       E: vec![G::Scalar::zero(); S.num_cons],
+      num_exposed: witness.num_exposed.clone(),
     }
   }
 
@@ -554,6 +558,18 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     (CE::<G>::commit(ck, &self.W), CE::<G>::commit(ck, &self.E))
   }
 
+  pub fn commit_exposed(&self, ck: &CommitmentKey<G>) -> Vec<Commitment<G>> {
+    let mut commitments = vec![];
+    // mask everything that's not exposed to zero
+    for (offset, len) in self.num_exposed.iter() {
+      let mut W_exposed_i = vec![G::Scalar::zero(); *len];
+      W_exposed_i.copy_from_slice(&self.W[*offset..(*offset + *len)]);
+      commitments.push(CE::<G>::commit(ck, &W_exposed_i));
+    }
+    commitments
+  }
+
+
   /// Folds an incoming R1CSWitness into the current one
   pub fn fold(
     &self,
@@ -561,6 +577,7 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     T: &[G::Scalar],
     r: &G::Scalar,
   ) -> Result<RelaxedR1CSWitness<G>, NovaError> {
+    assert!(self.num_exposed.iter().zip(W2.num_exposed.iter()).all(|(a, b)| a == b));
     let (W1, E1) = (&self.W, &self.E);
     let W2 = &W2.W;
 
@@ -578,7 +595,7 @@ impl<G: Group> RelaxedR1CSWitness<G> {
       .zip(T)
       .map(|(a, b)| *a + *r * *b)
       .collect::<Vec<G::Scalar>>();
-    Ok(RelaxedR1CSWitness { W, E })
+    Ok(RelaxedR1CSWitness { W, E, num_exposed: self.num_exposed.clone() })
   }
 
   /// Pads the provided witness to the correct length
@@ -595,7 +612,11 @@ impl<G: Group> RelaxedR1CSWitness<G> {
       E
     };
 
-    Self { W, E }
+    if W.len() != self.W.len() && !self.num_exposed.is_empty() {
+      unimplemented!("Witness padding not implemented for moonmoon exposing wires");
+    }
+
+    Self { W, E, num_exposed: self.num_exposed.clone() }
   }
 }
 
