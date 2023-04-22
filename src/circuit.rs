@@ -7,7 +7,7 @@
 //! the other into the running instance
 
 use crate::{
-  constants::{NUM_HASH_BITS},
+  constants::NUM_HASH_BITS,
   gadgets::{
     ecc::AllocatedPoint,
     r1cs::{AllocatedR1CSInstance, AllocatedRelaxedR1CSInstance},

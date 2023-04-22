@@ -540,12 +540,12 @@ impl<G: Group> R1CSInstance<G> {
 }
 
 impl<G: Group> AbsorbInROTrait<G> for R1CSInstance<G> {
-  fn num_absorbs(&self) -> usize { 
-     self.comm_W.num_absorbs()
-     + self
-      .comm_W_exposed
-      .iter()
-      .fold(0, |a, b| a + b.num_absorbs())
+  fn num_absorbs(&self) -> usize {
+    self.comm_W.num_absorbs()
+      + self
+        .comm_W_exposed
+        .iter()
+        .fold(0, |a, b| a + b.num_absorbs())
       + self.X.len()
       + self.run.len()
   }
@@ -666,7 +666,7 @@ impl<G: Group> RelaxedR1CSInstance<G> {
   pub fn default(_ck: &CommitmentKey<G>, S: &R1CSShape<G>) -> RelaxedR1CSInstance<G> {
     let (comm_W, comm_W_exposed, comm_E) = (
       Commitment::<G>::default(),
-      vec![],
+      S.num_exposed.iter().map(|_| Commitment::<G>::default()).collect::<Vec<Commitment::<G>>>(),
       Commitment::<G>::default(),
     );
     let run_len = comm_W_exposed.len() * BN_N_LIMBS;
@@ -732,8 +732,13 @@ impl<G: Group> RelaxedR1CSInstance<G> {
       .zip(X2)
       .map(|(a, b)| *a + *r * *b)
       .collect::<Vec<G::Scalar>>();
-    let comm_W = *comm_W_1 + *comm_W_2 * *r;
+
+    println!("comm_W_exposed_1.len() = {}", comm_W_exposed_1.len());
+    println!("comm_W_exposed_2.len() = {}", comm_W_exposed_2.len());
     assert!(comm_W_exposed_1.len() == comm_W_exposed_2.len());
+
+    let comm_W = *comm_W_1 + *comm_W_2 * *r;
+
     let comm_W_exposed = comm_W_exposed_1
       .iter()
       .zip(comm_W_exposed_2.iter())

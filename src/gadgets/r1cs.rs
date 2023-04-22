@@ -4,7 +4,7 @@ use super::nonnative::{
   util::{f_to_nat, Num},
 };
 use crate::{
-  constants::{NUM_CHALLENGE_BITS, BN_N_LIMBS},
+  constants::{BN_N_LIMBS, NUM_CHALLENGE_BITS},
   gadgets::{
     ecc::AllocatedPoint,
     utils::{
@@ -106,9 +106,7 @@ impl<G: Group> AllocatedR1CSInstance<G> {
   }
 
   pub fn get_total_absorbs(&self) -> usize {
-    5
-      + self.get_absorbs_from_W_exposed()
-      + self.get_absorbs_from_run()
+    5 + self.get_absorbs_from_W_exposed() + self.get_absorbs_from_run()
   }
 
   /// Absorb the provided instance in the RO
@@ -433,9 +431,11 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
   ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Vec<AllocatedBit>), SynthesisError> {
     // new - this is messy, I will just return r so I can use it later
     // Compute r:
-    let mut ro = G::ROCircuit::new(ro_consts, 4 // 4 
+    let mut ro = G::ROCircuit::new(
+      ro_consts,
+      4 // 4 
       + self.get_total_absorbs() 
-      + u.get_total_absorbs()
+      + u.get_total_absorbs(),
     );
     ro.absorb(params);
     self.absorb_in_ro(cs.namespace(|| "absorb running instance"), &mut ro)?;

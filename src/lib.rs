@@ -416,7 +416,6 @@ where
       return Err(NovaError::ProofVerifyError);
     }
 
-
     let (hash_primary, hash_secondary) = {
       let mut hasher = <G2 as Group>::RO::new(
         pp.ro_consts_secondary.clone(),
@@ -505,7 +504,11 @@ where
     res_l_secondary?;
     //res_run_primary?;
 
-    Ok((self.zi_primary.clone(), self.zi_secondary.clone(), self.l_u_secondary.run.clone()))
+    Ok((
+      self.zi_primary.clone(),
+      self.zi_secondary.clone(),
+      self.l_u_secondary.run.clone(),
+    ))
   }
 }
 
