@@ -122,6 +122,8 @@ pub trait CompressedGroup:
 
 /// A helper trait to absorb different objects in RO
 pub trait AbsorbInROTrait<G: Group> {
+  /// how many absorbs are done in absorb_in_ro?
+  fn num_absorbs(&self) -> usize;
   /// Absorbs the value in the provided RO
   fn absorb_in_ro(&self, ro: &mut G::RO);
 }

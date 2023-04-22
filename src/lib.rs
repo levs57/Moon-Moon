@@ -32,7 +32,7 @@ use crate::bellperson::{
 };
 use ::bellperson::{Circuit, ConstraintSystem};
 use circuit::{NovaAugmentedCircuit, NovaAugmentedCircuitInputs, NovaAugmentedCircuitParams};
-use constants::{BN_LIMB_WIDTH, BN_N_LIMBS, NUM_FE_WITHOUT_IO_FOR_CRHF_COMPILER_GET_MAD, NUM_HASH_BITS};
+use constants::{BN_LIMB_WIDTH, BN_N_LIMBS, NUM_HASH_BITS};
 use core::marker::PhantomData;
 use errors::NovaError;
 use ff::Field;
@@ -153,6 +153,7 @@ where
     )
   }
 
+  /// Returns the number of exposed variables in the primary and secondary circuits
   pub fn num_exposed(&self) -> (usize, usize) {
     (
       self.r1cs_shape_primary.num_exposed.len(),
@@ -395,7 +396,7 @@ where
     num_steps: usize,
     z0_primary: Vec<G1::Scalar>,
     z0_secondary: Vec<G2::Scalar>,
-  ) -> Result<(Vec<G1::Scalar>, Vec<G2::Scalar>), NovaError> {
+  ) -> Result<(Vec<G1::Scalar>, Vec<G2::Scalar>, Vec<G2::Scalar>), NovaError> {
     // number of steps cannot be zero
     if num_steps == 0 {
       return Err(NovaError::ProofVerifyError);
@@ -415,15 +416,11 @@ where
       return Err(NovaError::ProofVerifyError);
     }
 
-    // check if the output hashes in R1CS instances point to the right running instances
-
-    let (num_exposed_primary, num_exposed_secondary) = pp.num_exposed();
-    let num_runs = num_exposed_primary + num_exposed_secondary;
 
     let (hash_primary, hash_secondary) = {
       let mut hasher = <G2 as Group>::RO::new(
         pp.ro_consts_secondary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_primary + BN_N_LIMBS * num_runs + 3 * num_exposed_secondary,
+        2 + z0_primary.len() + self.zi_primary.len() + self.r_U_secondary.num_absorbs(),
       );
       hasher.absorb(scalar_as_base::<G2>(pp.r1cs_shape_secondary.get_digest()));
       hasher.absorb(G1::Scalar::from(num_steps as u64));
@@ -437,7 +434,7 @@ where
 
       let mut hasher2 = <G1 as Group>::RO::new(
         pp.ro_consts_primary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * pp.F_arity_secondary + BN_N_LIMBS * num_runs + 3 * num_exposed_primary,
+        2 + z0_secondary.len() + self.zi_secondary.len() + self.r_U_primary.num_absorbs(),
       );
       hasher2.absorb(scalar_as_base::<G1>(pp.r1cs_shape_primary.get_digest()));
       hasher2.absorb(G2::Scalar::from(num_steps as u64));
@@ -470,7 +467,6 @@ where
               &pp.ck_primary,
               &self.r_U_primary,
               &self.r_W_primary,
-
             )
           },
           || {
@@ -499,19 +495,17 @@ where
       },
     );
 
-    let res_run_primary = rayon::join(
-      || {
-        COMPILER_GET_ANGRY_HERE
-      });
+    // let res_run_primary = COMPILER ANGRY SPOT;
+    // todo check run
 
     // check the returned res objects
     res_r_primary?;
     res_l_primary?;
     res_r_secondary?;
     res_l_secondary?;
-    res_run_primary?;
+    //res_run_primary?;
 
-    Ok((self.zi_primary.clone(), self.zi_secondary.clone()))
+    Ok((self.zi_primary.clone(), self.zi_secondary.clone(), self.l_u_secondary.run.clone()))
   }
 }
 
@@ -725,7 +719,7 @@ where
     let (hash_primary, hash_secondary) = {
       let mut hasher = <G2 as Group>::RO::new(
         vk.ro_consts_secondary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * vk.F_arity_primary,
+        2 + z0_primary.len() + self.zn_primary.len() + self.r_U_secondary.num_absorbs(),
       );
       hasher.absorb(scalar_as_base::<G2>(vk.r1cs_shape_secondary_digest));
       hasher.absorb(G1::Scalar::from(num_steps as u64));
@@ -739,7 +733,7 @@ where
 
       let mut hasher2 = <G1 as Group>::RO::new(
         vk.ro_consts_primary.clone(),
-        NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * vk.F_arity_secondary,
+        2 + z0_secondary.len() + self.zn_secondary.len() + self.r_U_primary.num_absorbs(),
       );
       hasher2.absorb(scalar_as_base::<G1>(vk.r1cs_shape_primary_digest));
       hasher2.absorb(G2::Scalar::from(num_steps as u64));
@@ -958,7 +952,7 @@ mod tests {
     );
     assert!(res.is_ok());
 
-    let (zn_primary, zn_secondary) = res.unwrap();
+    let (zn_primary, zn_secondary, _) = res.unwrap();
 
     // sanity: check the claimed output with a direct computation of the same
     assert_eq!(zn_primary, vec![<G1 as Group>::Scalar::one()]);
@@ -1020,7 +1014,7 @@ mod tests {
     );
     assert!(res.is_ok());
 
-    let (zn_primary, zn_secondary) = res.unwrap();
+    let (zn_primary, zn_secondary, _) = res.unwrap();
 
     // sanity: check the claimed output with a direct computation of the same
     assert_eq!(zn_primary, vec![<G1 as Group>::Scalar::one()]);
@@ -1099,7 +1093,7 @@ mod tests {
     );
     assert!(res.is_ok());
 
-    let (zn_primary, zn_secondary) = res.unwrap();
+    let (zn_primary, zn_secondary, _) = res.unwrap();
 
     // sanity: check the claimed output with a direct computation of the same
     assert_eq!(zn_primary, vec![<G1 as Group>::Scalar::one()]);
@@ -1311,7 +1305,7 @@ mod tests {
     );
     assert!(res.is_ok());
 
-    let (zn_primary, zn_secondary) = res.unwrap();
+    let (zn_primary, zn_secondary, _) = res.unwrap();
 
     assert_eq!(zn_primary, vec![<G1 as Group>::Scalar::one()]);
     assert_eq!(zn_secondary, vec![<G2 as Group>::Scalar::from(5u64)]);

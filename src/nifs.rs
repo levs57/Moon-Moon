@@ -3,7 +3,7 @@
 #![allow(clippy::type_complexity)]
 
 use crate::{
-  constants::{NUM_CHALLENGE_BITS, NUM_FE_FOR_RO},
+  constants::{NUM_CHALLENGE_BITS},
   errors::NovaError,
   r1cs::{R1CSInstance, R1CSShape, R1CSWitness, RelaxedR1CSInstance, RelaxedR1CSWitness},
   scalar_as_base,
@@ -41,8 +41,14 @@ impl<G: Group> NIFS<G> {
     U2: &R1CSInstance<G>,
     W2: &R1CSWitness<G>,
   ) -> Result<(NIFS<G>, (RelaxedR1CSInstance<G>, RelaxedR1CSWitness<G>)), NovaError> {
+    // compute a commitment to the cross-term
+    let (T, comm_T) = S.commit_T(ck, U1, W1, U2, W2)?;
+
     // initialize a new RO
-    let mut ro = G::RO::new(ro_consts.clone(), NUM_FE_FOR_RO);
+    let mut ro = G::RO::new(
+      ro_consts.clone(),
+      S.num_absorbs() + U1.num_absorbs() + U2.num_absorbs() + comm_T.num_absorbs(),
+    );
 
     // append S to the transcript
     S.absorb_in_ro(&mut ro);
@@ -50,9 +56,6 @@ impl<G: Group> NIFS<G> {
     // append U1 and U2 to transcript
     U1.absorb_in_ro(&mut ro);
     U2.absorb_in_ro(&mut ro);
-
-    // compute a commitment to the cross-term
-    let (T, comm_T) = S.commit_T(ck, U1, W1, U2, W2)?;
 
     // append `comm_T` to the transcript and obtain a challenge
     comm_T.absorb_in_ro(&mut ro);
@@ -88,8 +91,9 @@ impl<G: Group> NIFS<G> {
     U1: &RelaxedR1CSInstance<G>,
     U2: &R1CSInstance<G>,
   ) -> Result<RelaxedR1CSInstance<G>, NovaError> {
+    let comm_T = Commitment::<G>::decompress(&self.comm_T)?;
     // initialize a new RO
-    let mut ro = G::RO::new(ro_consts.clone(), NUM_FE_FOR_RO);
+    let mut ro = G::RO::new(ro_consts.clone(), 1 + U1.num_absorbs() + U2.num_absorbs() + comm_T.num_absorbs());
 
     // append the digest of S to the transcript
     ro.absorb(scalar_as_base::<G>(*S_digest));
@@ -99,7 +103,6 @@ impl<G: Group> NIFS<G> {
     U2.absorb_in_ro(&mut ro);
 
     // append `comm_T` to the transcript and obtain a challenge
-    let comm_T = Commitment::<G>::decompress(&self.comm_T)?;
     comm_T.absorb_in_ro(&mut ro);
 
     // compute a challenge from the RO
@@ -298,7 +301,7 @@ mod tests {
 
     // create a shape object
     let S = {
-      let res = R1CSShape::new(num_cons, num_vars, num_io, &A, &B, &C);
+      let res = R1CSShape::new(num_cons, num_vars, num_io, &vec![], &A, &B, &C, );
       assert!(res.is_ok());
       res.unwrap()
     };
@@ -332,7 +335,7 @@ mod tests {
         };
         let U = {
           let comm_W = W.commit(ck);
-          let res = R1CSInstance::new(&S, &comm_W, &X);
+          let res = R1CSInstance::new(&S, &comm_W, &vec![], &X);
           assert!(res.is_ok());
           res.unwrap()
         };

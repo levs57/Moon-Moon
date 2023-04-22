@@ -234,8 +234,12 @@ impl<G: Group> R1CSShape<G> {
       U.comm_W == comm_W && U.comm_E == comm_E
     };
 
-    let res_w_exposed_comm = U.comm_W_exposed.iter().zip(W.commit_exposed(ck).iter()).all(|(a,b)| a==b);
- 
+    let res_w_exposed_comm = U
+      .comm_W_exposed
+      .iter()
+      .zip(W.commit_exposed(ck).iter())
+      .all(|(a, b)| a == b);
+
     if res_eq && res_comm && res_w_exposed_comm {
       Ok(())
     } else {
@@ -270,9 +274,13 @@ impl<G: Group> R1CSShape<G> {
 
     // verify if comm_W is a commitment to W
     let res_comm: bool = U.comm_W == CE::<G>::commit(ck, &W.W);
-    
+
     // check w_exposed
-    let res_w_exposed_comm = U.comm_W_exposed.iter().zip(W.commit_exposed(ck).iter()).all(|(a,b)| a==b);
+    let res_w_exposed_comm = U
+      .comm_W_exposed
+      .iter()
+      .zip(W.commit_exposed(ck).iter())
+      .all(|(a, b)| a == b);
 
     if res_eq && res_comm && res_w_exposed_comm {
       Ok(())
@@ -472,6 +480,9 @@ impl<G: Group> TranscriptReprTrait<G> for R1CSShape<G> {
 }
 
 impl<G: Group> AbsorbInROTrait<G> for R1CSShape<G> {
+  fn num_absorbs(&self) -> usize {
+    1
+  }
   fn absorb_in_ro(&self, ro: &mut G::RO) {
     ro.absorb(scalar_as_base::<G>(self.get_digest()));
   }
@@ -494,7 +505,7 @@ impl<G: Group> R1CSWitness<G> {
   pub fn commit(&self, ck: &CommitmentKey<G>) -> Commitment<G> {
     CE::<G>::commit(ck, &self.W)
   }
-  
+
   pub fn commit_exposed(&self, ck: &CommitmentKey<G>) -> Vec<Commitment<G>> {
     let mut commitments = vec![];
     // mask everything that's not exposed to zero
@@ -529,9 +540,19 @@ impl<G: Group> R1CSInstance<G> {
 }
 
 impl<G: Group> AbsorbInROTrait<G> for R1CSInstance<G> {
+  fn num_absorbs(&self) -> usize { 
+     self.comm_W.num_absorbs()
+     + self
+      .comm_W_exposed
+      .iter()
+      .fold(0, |a, b| a + b.num_absorbs())
+      + self.X.len()
+      + self.run.len()
+  }
+
   fn absorb_in_ro(&self, ro: &mut G::RO) {
     self.comm_W.absorb_in_ro(ro);
-    for comm_W_exposed_i in self.comm_W_exposed{
+    for comm_W_exposed_i in self.comm_W_exposed.iter() {
       comm_W_exposed_i.absorb_in_ro(ro);
     }
     for x in &self.X {
@@ -578,7 +599,6 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     commitments
   }
 
-
   /// Folds an incoming R1CSWitness into the current one
   pub fn fold(
     &self,
@@ -586,7 +606,11 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     T: &[G::Scalar],
     r: &G::Scalar,
   ) -> Result<RelaxedR1CSWitness<G>, NovaError> {
-    assert!(self.num_exposed.iter().zip(W2.num_exposed.iter()).all(|(a, b)| a == b));
+    assert!(self
+      .num_exposed
+      .iter()
+      .zip(W2.num_exposed.iter())
+      .all(|(a, b)| a == b));
     let (W1, E1) = (&self.W, &self.E);
     let W2 = &W2.W;
 
@@ -604,7 +628,11 @@ impl<G: Group> RelaxedR1CSWitness<G> {
       .zip(T)
       .map(|(a, b)| *a + *r * *b)
       .collect::<Vec<G::Scalar>>();
-    Ok(RelaxedR1CSWitness { W, E, num_exposed: self.num_exposed.clone() })
+    Ok(RelaxedR1CSWitness {
+      W,
+      E,
+      num_exposed: self.num_exposed.clone(),
+    })
   }
 
   /// Pads the provided witness to the correct length
@@ -625,7 +653,11 @@ impl<G: Group> RelaxedR1CSWitness<G> {
       unimplemented!("Witness padding not implemented for moonmoon exposing wires");
     }
 
-    Self { W, E, num_exposed: self.num_exposed.clone() }
+    Self {
+      W,
+      E,
+      num_exposed: self.num_exposed.clone(),
+    }
   }
 }
 
@@ -741,13 +773,25 @@ impl<G: Group> TranscriptReprTrait<G> for RelaxedR1CSInstance<G> {
 }
 
 impl<G: Group> AbsorbInROTrait<G> for RelaxedR1CSInstance<G> {
+  fn num_absorbs(&self) -> usize {
+    self.comm_W.num_absorbs()
+      + self.comm_E.num_absorbs()
+      + 1
+      + self
+        .comm_W_exposed
+        .iter()
+        .fold(0, |acc, x| acc + x.num_absorbs())
+      + self.X.len() * 4
+      + self.run.len() * 4
+  }
+
   fn absorb_in_ro(&self, ro: &mut G::RO) {
     self.comm_W.absorb_in_ro(ro);
 
     self.comm_E.absorb_in_ro(ro);
     ro.absorb(scalar_as_base::<G>(self.u));
 
-    for comm_W_exposed_i in self.comm_W_exposed{
+    for comm_W_exposed_i in self.comm_W_exposed.iter() {
       comm_W_exposed_i.absorb_in_ro(ro);
     } //to keep parity with Claudia's code in gadgets/r1cs.rs we ensure that absorbtion is in the order W-E-u-W_exposed-x-run
 
@@ -759,11 +803,11 @@ impl<G: Group> AbsorbInROTrait<G> for RelaxedR1CSInstance<G> {
       }
     }
     for run_i in &self.run {
-      let limbs: Vec<G::Scalar> = nat_to_limbs(&f_to_nat(run_i), BN_LIMB_WIDTH, BN_N_LIMBS).unwrap();
+      let limbs: Vec<G::Scalar> =
+        nat_to_limbs(&f_to_nat(run_i), BN_LIMB_WIDTH, BN_N_LIMBS).unwrap();
       for limb in limbs {
         ro.absorb(scalar_as_base::<G>(limb));
       }
     }
-
   }
 }

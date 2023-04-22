@@ -7,7 +7,7 @@
 //! the other into the running instance
 
 use crate::{
-  constants::{NUM_FE_WITHOUT_IO_FOR_CRHF_COMPILER_GET_MAD, NUM_HASH_BITS},
+  constants::{NUM_HASH_BITS},
   gadgets::{
     ecc::AllocatedPoint,
     r1cs::{AllocatedR1CSInstance, AllocatedRelaxedR1CSInstance},
@@ -222,19 +222,20 @@ impl<G: Group, SC: StepCircuit<G::Base>> NovaAugmentedCircuit<G, SC> {
     U: AllocatedRelaxedR1CSInstance<G>,
     u: AllocatedR1CSInstance<G>,
     T: AllocatedPoint<G>,
-    arity: usize,
   ) -> Result<(AllocatedRelaxedR1CSInstance<G>, AllocatedBit), SynthesisError> {
     // Check that u.x[0] = Hash(params, U, i, z0, zi)
     let mut ro = G::ROCircuit::new(
       self.ro_consts.clone(),
-      NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity + U.get_absorbs_from_W_exposed() + U.get_absorbs_from_run(), 
+      2 + z_0.len() + z_i.len() + U.get_total_absorbs(),
     );
     ro.absorb(params.clone()); //1
     ro.absorb(i); //2
-    for e in z_0 { //2+arity
+    for e in z_0 {
+      //2+arity
       ro.absorb(e);
     }
-    for e in z_i { //2+2*arity
+    for e in z_i {
+      //2+2*arity
       ro.absorb(e);
     }
     U.absorb_in_ro(cs.namespace(|| "absorb U"), &mut ro)?;
@@ -293,7 +294,6 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
       U,
       u.clone(),
       T,
-      arity,
     )?;
 
     // Either check_non_base_pass=true or we are in the base case
@@ -310,7 +310,7 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
     );
 
     // Compute the U_new
-    let   Unew = Unew_base.conditionally_select(
+    let Unew = Unew_base.conditionally_select(
       cs.namespace(|| "compute U_new"),
       Unew_non_base,
       &Boolean::from(is_base_case.clone()),
@@ -346,7 +346,10 @@ impl<G: Group, SC: StepCircuit<G::Base>> Circuit<<G as Group>::Base>
     }
 
     // Compute the new hash H(params, Unew, i+1, z0, z_{i+1})
-    let mut ro = G::ROCircuit::new(self.ro_consts.clone(), NUM_FE_WITHOUT_IO_FOR_CRHF + 2 * arity + U.get_absorbs_from_W_exposed() + U.get_absorbs_from_run());
+    let mut ro = G::ROCircuit::new(
+      self.ro_consts.clone(),
+      2 + z_0.len() + z_next.len() + Unew.get_total_absorbs(),
+    );
     ro.absorb(params);
     ro.absorb(i_new.clone());
     for e in z_0 {

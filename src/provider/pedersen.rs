@@ -80,6 +80,10 @@ impl<G: Group> TranscriptReprTrait<G> for Commitment<G> {
 }
 
 impl<G: Group> AbsorbInROTrait<G> for Commitment<G> {
+  fn num_absorbs(&self) -> usize {
+    3
+  }
+
   fn absorb_in_ro(&self, ro: &mut G::RO) {
     let (x, y, is_infinity) = self.comm.to_coordinates();
     ro.absorb(x);

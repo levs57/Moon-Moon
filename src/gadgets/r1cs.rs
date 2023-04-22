@@ -4,7 +4,7 @@ use super::nonnative::{
   util::{f_to_nat, Num},
 };
 use crate::{
-  constants::{NUM_CHALLENGE_BITS, NUM_FE_FOR_RO, BN_N_LIMBS},
+  constants::{NUM_CHALLENGE_BITS, BN_N_LIMBS},
   gadgets::{
     ecc::AllocatedPoint,
     utils::{
@@ -95,6 +95,20 @@ impl<G: Group> AllocatedR1CSInstance<G> {
       X1,
       run,
     })
+  }
+
+  pub fn get_absorbs_from_W_exposed(&self) -> usize {
+    self.W_exposed.len() * 3
+  }
+
+  pub fn get_absorbs_from_run(&self) -> usize {
+    self.run.len()
+  }
+
+  pub fn get_total_absorbs(&self) -> usize {
+    5
+      + self.get_absorbs_from_W_exposed()
+      + self.get_absorbs_from_run()
   }
 
   /// Absorb the provided instance in the RO
@@ -312,10 +326,18 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
 
   pub fn get_absorbs_from_W_exposed(&self) -> usize {
     self.W_exposed.len() * 3
+    // W_exposed is points so 3 elements per point
   }
 
   pub fn get_absorbs_from_run(&self) -> usize {
     self.run.len() * BN_N_LIMBS
+    // run is bignum scalars so n_limbs elements per
+  }
+
+  pub fn get_total_absorbs(&self) -> usize {
+    7 + self.get_absorbs_from_W_exposed() + self.get_absorbs_from_run() + 4 + 4
+    // 7 is the number of elements in the instance that are not W_exposed or run
+    // the fours are from the limbs of X_0 and X_1
   }
 
   /// Absorb the provided instance in the RO
@@ -411,7 +433,10 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
   ) -> Result<(AllocatedRelaxedR1CSInstance<G>, Vec<AllocatedBit>), SynthesisError> {
     // new - this is messy, I will just return r so I can use it later
     // Compute r:
-    let mut ro = G::ROCircuit::new(ro_consts, NUM_FE_FOR_RO);
+    let mut ro = G::ROCircuit::new(ro_consts, 4 // 4 
+      + self.get_total_absorbs() 
+      + u.get_total_absorbs()
+    );
     ro.absorb(params);
     self.absorb_in_ro(cs.namespace(|| "absorb running instance"), &mut ro)?;
     u.absorb_in_ro(&mut ro);
