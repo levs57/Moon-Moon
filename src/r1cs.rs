@@ -35,7 +35,7 @@ pub struct R1CSShape<G: Group> {
   pub(crate) num_io: usize,
   /// offsets and lengths of the exposed snippets from within the witness
   /// these index into num_vars and are validated in R1CSWitness::new
-  pub(crate) num_exposed: Vec<(usize, usize)>, //new
+  pub(crate) exposed_varsets: Vec<Vec<usize>>, //new
   pub(crate) A: Vec<(usize, usize, G::Scalar)>,
   pub(crate) B: Vec<(usize, usize, G::Scalar)>,
   pub(crate) C: Vec<(usize, usize, G::Scalar)>,
@@ -46,7 +46,7 @@ pub struct R1CSShape<G: Group> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct R1CSWitness<G: Group> {
   W: Vec<G::Scalar>,
-  num_exposed: Vec<(usize, usize)>, //new
+  exposed_varsets: Vec<Vec<usize>>, //new
 }
 
 /// A type that holds an R1CS instance
@@ -63,7 +63,7 @@ pub struct R1CSInstance<G: Group> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelaxedR1CSWitness<G: Group> {
   pub(crate) W: Vec<G::Scalar>,
-  pub(crate) num_exposed: Vec<(usize, usize)>, //new
+  pub(crate) exposed_varsets: Vec<Vec<usize>>,
   pub(crate) E: Vec<G::Scalar>,
 }
 
@@ -95,7 +95,7 @@ impl<G: Group> R1CSShape<G> {
     num_cons: usize,
     num_vars: usize,
     num_io: usize,
-    num_exposed: &Vec<(usize, usize)>, //new
+    exposed_varsets: &Vec<Vec<usize>>, //new
     A: &[(usize, usize, G::Scalar)],
     B: &[(usize, usize, G::Scalar)],
     C: &[(usize, usize, G::Scalar)],
@@ -137,24 +137,21 @@ impl<G: Group> R1CSShape<G> {
     }
 
     // check the validity of the exposed ranges
-    let _res_exposed = (0..num_exposed.len())
-      .map(|i| {
-        let (offset, len) = num_exposed[i];
-        if offset + len > num_vars {
-          Err(NovaError::InvalidIndex)
-        } else {
-          Ok(())
+    for i in 0..exposed_varsets.len() {
+      for j in 0..exposed_varsets[i].len() {
+        if exposed_varsets[i][j] >= num_vars {
+          return Err(NovaError::InvalidIndex);
         }
-      })
-      .collect::<Result<Vec<()>, NovaError>>()?;
+      }
+    }
 
-    let digest = Self::compute_digest(num_cons, num_vars, num_io, A, B, C);
+    let digest = Self::compute_digest(num_cons, num_vars, num_io, exposed_varsets, A, B, C);
 
     let shape = R1CSShape {
       num_cons,
       num_vars,
       num_io,
-      num_exposed: num_exposed.to_owned(),
+      exposed_varsets: exposed_varsets.to_owned(),
       A: A.to_owned(),
       B: B.to_owned(),
       C: C.to_owned(),
@@ -348,6 +345,7 @@ impl<G: Group> R1CSShape<G> {
     num_cons: usize,
     num_vars: usize,
     num_io: usize,
+    exposed_varsets: &Vec<Vec<usize>>,
     A: &[(usize, usize, G::Scalar)],
     B: &[(usize, usize, G::Scalar)],
     C: &[(usize, usize, G::Scalar)],
@@ -414,13 +412,21 @@ impl<G: Group> R1CSShape<G> {
     // check if the number of variables are as expected, then
     // we simply set the number of constraints to the next power of two
     if self.num_vars == m {
-      let digest = Self::compute_digest(m, self.num_vars, self.num_io, &self.A, &self.B, &self.C);
+      let digest = Self::compute_digest(
+        m,
+        self.num_vars,
+        self.num_io,
+        &self.exposed_varsets,
+        &self.A,
+        &self.B,
+        &self.C,
+      );
 
       return R1CSShape {
         num_cons: m,
         num_vars: m,
         num_io: self.num_io,
-        num_exposed: self.num_exposed.clone(),
+        exposed_varsets: self.exposed_varsets.clone(),
         A: self.A.clone(),
         B: self.B.clone(),
         C: self.C.clone(),
@@ -447,7 +453,7 @@ impl<G: Group> R1CSShape<G> {
     let B_padded = apply_pad(&self.B);
     let C_padded = apply_pad(&self.C);
 
-    if !self.num_exposed.is_empty() {
+    if !self.exposed_varsets.is_empty() {
       unimplemented!("padding for exposed witnesses is not implemented yet!")
     }
 
@@ -455,6 +461,7 @@ impl<G: Group> R1CSShape<G> {
       num_cons_padded,
       num_vars_padded,
       self.num_io,
+      &self.exposed_varsets,
       &A_padded,
       &B_padded,
       &C_padded,
@@ -464,7 +471,7 @@ impl<G: Group> R1CSShape<G> {
       num_cons: num_cons_padded,
       num_vars: num_vars_padded,
       num_io: self.num_io,
-      num_exposed: self.num_exposed.clone(),
+      exposed_varsets: self.exposed_varsets.clone(),
       A: A_padded,
       B: B_padded,
       C: C_padded,
@@ -496,7 +503,7 @@ impl<G: Group> R1CSWitness<G> {
     } else {
       Ok(R1CSWitness {
         W: W.to_owned(),
-        num_exposed: S.num_exposed.clone(),
+        exposed_varsets: S.exposed_varsets.clone(),
       })
     }
   }
@@ -509,10 +516,12 @@ impl<G: Group> R1CSWitness<G> {
   pub fn commit_exposed(&self, ck: &CommitmentKey<G>) -> Vec<Commitment<G>> {
     let mut commitments = vec![];
     // mask everything that's not exposed to zero
-    for (offset, len) in self.num_exposed.iter() {
-      let mut W_exposed_i = vec![G::Scalar::zero(); *len];
-      W_exposed_i.copy_from_slice(&self.W[*offset..(*offset + *len)]);
-      commitments.push(CE::<G>::commit(ck, &W_exposed_i));
+    for exposed_varset in self.exposed_varsets.iter() {
+      let mut W_exposed_i = vec![G::Scalar::zero(); self.W.len()];
+      for exposed_wire in exposed_varset.iter() {
+        W_exposed_i[*exposed_wire] = self.W[*exposed_wire];
+      }
+      commitments.push(CE::<G>::commit(ck, W_exposed_i.as_slice()));
     }
     commitments
   }
@@ -570,7 +579,7 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     RelaxedR1CSWitness {
       W: vec![G::Scalar::zero(); S.num_vars],
       E: vec![G::Scalar::zero(); S.num_cons],
-      num_exposed: S.num_exposed.clone(),
+      exposed_varsets: S.exposed_varsets.clone(),
     }
   }
 
@@ -579,7 +588,7 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     RelaxedR1CSWitness {
       W: witness.W.clone(),
       E: vec![G::Scalar::zero(); S.num_cons],
-      num_exposed: witness.num_exposed.clone(),
+      exposed_varsets: witness.exposed_varsets.clone(),
     }
   }
 
@@ -591,10 +600,12 @@ impl<G: Group> RelaxedR1CSWitness<G> {
   pub fn commit_exposed(&self, ck: &CommitmentKey<G>) -> Vec<Commitment<G>> {
     let mut commitments = vec![];
     // mask everything that's not exposed to zero
-    for (offset, len) in self.num_exposed.iter() {
-      let mut W_exposed_i = vec![G::Scalar::zero(); *len];
-      W_exposed_i.copy_from_slice(&self.W[*offset..(*offset + *len)]);
-      commitments.push(CE::<G>::commit(ck, &W_exposed_i));
+    for exposed_varset in self.exposed_varsets.iter() {
+      let mut W_exposed_i = vec![G::Scalar::zero(); self.W.len()];
+      for exposed_wire in exposed_varset.iter() {
+        W_exposed_i[*exposed_wire] = self.W[*exposed_wire];
+      }
+      commitments.push(CE::<G>::commit(ck, W_exposed_i.as_slice()));
     }
     commitments
   }
@@ -607,10 +618,10 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     r: &G::Scalar,
   ) -> Result<RelaxedR1CSWitness<G>, NovaError> {
     assert!(self
-      .num_exposed
+      .exposed_varsets
       .iter()
-      .zip(W2.num_exposed.iter())
-      .all(|(a, b)| a == b));
+      .zip(W2.exposed_varsets.iter())
+      .all(|(a, b)| a.iter().zip(b.iter()).all(|(a, b)| a == b)));
     let (W1, E1) = (&self.W, &self.E);
     let W2 = &W2.W;
 
@@ -631,7 +642,7 @@ impl<G: Group> RelaxedR1CSWitness<G> {
     Ok(RelaxedR1CSWitness {
       W,
       E,
-      num_exposed: self.num_exposed.clone(),
+      exposed_varsets: self.exposed_varsets.clone(),
     })
   }
 
@@ -649,14 +660,14 @@ impl<G: Group> RelaxedR1CSWitness<G> {
       E
     };
 
-    if W.len() != self.W.len() && !self.num_exposed.is_empty() {
+    if W.len() != self.W.len() && !self.exposed_varsets.is_empty() {
       unimplemented!("Witness padding not implemented for moonmoon exposing wires");
     }
 
     Self {
       W,
       E,
-      num_exposed: self.num_exposed.clone(),
+      exposed_varsets: self.exposed_varsets.clone(),
     }
   }
 }
@@ -666,7 +677,10 @@ impl<G: Group> RelaxedR1CSInstance<G> {
   pub fn default(_ck: &CommitmentKey<G>, S: &R1CSShape<G>) -> RelaxedR1CSInstance<G> {
     let (comm_W, comm_W_exposed, comm_E) = (
       Commitment::<G>::default(),
-      S.num_exposed.iter().map(|_| Commitment::<G>::default()).collect::<Vec<Commitment::<G>>>(),
+      S.exposed_varsets
+        .iter()
+        .map(|_| Commitment::<G>::default())
+        .collect::<Vec<Commitment<G>>>(),
       Commitment::<G>::default(),
     );
     let run_len = comm_W_exposed.len() * BN_N_LIMBS;

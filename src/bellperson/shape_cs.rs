@@ -1,12 +1,15 @@
 //! Support for generating R1CS shape using bellperson.
 
 use std::{
+  cell::RefCell,
   cmp::Ordering,
   collections::{BTreeMap, HashMap},
 };
 
+use crate::bellperson::exposed_constraint_system::ExposedConstraintSystem;
 use crate::traits::Group;
-use bellperson::{ConstraintSystem, Index, LinearCombination, SynthesisError, Variable};
+use bellperson::ConstraintSystem;
+use bellperson::{Index, LinearCombination, SynthesisError, Variable};
 use core::fmt::Write;
 use ff::{Field, PrimeField};
 
@@ -64,7 +67,8 @@ where
   )>,
   inputs: Vec<String>,
   aux: Vec<String>,
-  pub num_exposed: Vec<(usize, usize)>,
+  /// maps the exposed number to a refcell mapping auxillary variable names to their index
+  exposed_auxilaries: HashMap<usize, RefCell<HashMap<String, usize>>>,
 }
 
 fn proc_lc<Scalar: PrimeField>(
@@ -230,7 +234,7 @@ where
       constraints: vec![],
       inputs: vec![String::from("ONE")],
       aux: vec![],
-      num_exposed: vec![],
+      exposed_auxilaries: HashMap::new(),
     }
   }
 }
@@ -301,6 +305,39 @@ where
 
   fn get_root(&mut self) -> &mut Self::Root {
     self
+  }
+}
+
+impl<G: Group> ExposedConstraintSystem<G::Scalar> for ShapeCS<G>
+where
+  G::Scalar: PrimeField,
+{
+  fn expose_aux<AR, A>(
+    &mut self,
+    aux_set_number: usize,
+    aux_item_annotation: A,
+  ) -> Result<(), SynthesisError>
+  where
+    A: FnOnce() -> AR,
+    AR: Into<String>,
+  {
+    // TODO
+    let path = compute_path(&self.current_namespace, &aux_item_annotation().into());
+    // find the location of path in the aux vector
+    let index = self
+      .aux
+      .iter()
+      .position(|x| x == &path)
+      .ok_or(SynthesisError::AssignmentMissing)?;
+    if !self.exposed_auxilaries.contains_key(&aux_set_number) {
+      self
+        .exposed_auxilaries
+        .insert(aux_set_number, RefCell::new(HashMap::new()));
+    }
+    let aux_set = self.exposed_auxilaries.get_mut(&aux_set_number).unwrap();
+    let aux_set = aux_set.get_mut();
+    aux_set.insert(path, index);
+    Ok(())
   }
 }
 

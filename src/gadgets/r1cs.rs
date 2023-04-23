@@ -434,7 +434,7 @@ impl<G: Group> AllocatedRelaxedR1CSInstance<G> {
     let mut ro = G::ROCircuit::new(
       ro_consts,
       4 // 4 
-      + self.get_total_absorbs() 
+      + self.get_total_absorbs()
       + u.get_total_absorbs(),
     );
     ro.absorb(params);

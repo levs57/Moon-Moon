@@ -153,11 +153,11 @@ where
     )
   }
 
-  /// Returns the number of exposed variables in the primary and secondary circuits
-  pub fn num_exposed(&self) -> (usize, usize) {
+  /// Returns the number of exposed varsets in the primary and secondary circuits
+  pub fn num_exposed_varsets(&self) -> (usize, usize) {
     (
-      self.r1cs_shape_primary.num_exposed.len(),
-      self.r1cs_shape_secondary.num_exposed.len(),
+      self.r1cs_shape_primary.exposed_varsets.len(),
+      self.r1cs_shape_secondary.exposed_varsets.len(),
     )
   }
 }
@@ -1312,5 +1312,79 @@ mod tests {
 
     assert_eq!(zn_primary, vec![<G1 as Group>::Scalar::one()]);
     assert_eq!(zn_secondary, vec![<G2 as Group>::Scalar::from(5u64)]);
+  }
+
+  #[test]
+  fn test_ivc_nontrivial_exposed_witness() {
+    let circuit_primary = TrivialTestCircuit::default();
+    let circuit_secondary = CubicCircuit::default();
+
+    // produce public parameters
+    let pp = PublicParams::<
+      G1,
+      G2,
+      TrivialTestCircuit<<G1 as Group>::Scalar>,
+      CubicCircuit<<G2 as Group>::Scalar>,
+    >::setup(circuit_primary.clone(), circuit_secondary.clone());
+
+    let num_steps = 3;
+
+    // produce a recursive SNARK
+    let mut recursive_snark: Option<
+      RecursiveSNARK<
+        G1,
+        G2,
+        TrivialTestCircuit<<G1 as Group>::Scalar>,
+        CubicCircuit<<G2 as Group>::Scalar>,
+      >,
+    > = None;
+
+    for i in 0..num_steps {
+      let res = RecursiveSNARK::prove_step(
+        &pp,
+        recursive_snark,
+        circuit_primary.clone(),
+        circuit_secondary.clone(),
+        vec![<G1 as Group>::Scalar::one()],
+        vec![<G2 as Group>::Scalar::zero()],
+      );
+      assert!(res.is_ok());
+      let recursive_snark_unwrapped = res.unwrap();
+
+      // verify the recursive snark at each step of recursion
+      let res = recursive_snark_unwrapped.verify(
+        &pp,
+        i + 1,
+        vec![<G1 as Group>::Scalar::one()],
+        vec![<G2 as Group>::Scalar::zero()],
+      );
+      assert!(res.is_ok());
+
+      // set the running variable for the next iteration
+      recursive_snark = Some(recursive_snark_unwrapped);
+    }
+
+    assert!(recursive_snark.is_some());
+    let recursive_snark = recursive_snark.unwrap();
+
+    // verify the recursive SNARK
+    let res = recursive_snark.verify(
+      &pp,
+      num_steps,
+      vec![<G1 as Group>::Scalar::one()],
+      vec![<G2 as Group>::Scalar::zero()],
+    );
+    assert!(res.is_ok());
+
+    let (zn_primary, zn_secondary, _) = res.unwrap();
+
+    // sanity: check the claimed output with a direct computation of the same
+    assert_eq!(zn_primary, vec![<G1 as Group>::Scalar::one()]);
+    let mut zn_secondary_direct = vec![<G2 as Group>::Scalar::zero()];
+    for _i in 0..num_steps {
+      zn_secondary_direct = CubicCircuit::default().output(&zn_secondary_direct);
+    }
+    assert_eq!(zn_secondary, zn_secondary_direct);
+    assert_eq!(zn_secondary, vec![<G2 as Group>::Scalar::from(2460515u64)]);
   }
 }

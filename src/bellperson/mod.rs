@@ -2,6 +2,7 @@
 //!
 //! [Bellperson]: https://github.com/filecoin-project/bellperson
 
+pub mod exposed_constraint_system;
 pub mod r1cs;
 pub mod shape_cs;
 pub mod solver;

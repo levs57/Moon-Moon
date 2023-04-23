@@ -83,7 +83,7 @@ where
         num_constraints,
         num_vars,
         num_inputs - 1,
-        &self.num_exposed,
+        &self.,
         &A,
         &B,
         &C,

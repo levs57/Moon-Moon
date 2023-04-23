@@ -121,6 +121,8 @@ impl<G: Group> NIFS<G> {
 
 #[cfg(test)]
 mod tests {
+  use std::collections::HashSet;
+
   use super::*;
   use crate::{
     r1cs::R1CS,
@@ -361,11 +363,13 @@ mod tests {
   #[test]
   fn test_tiny_r1cs_nonempty_exposed_witness() {
     let one = S::one();
-    let (num_cons, num_vars, num_io, num_exposed, A, B, C) = {
+    let (num_cons, num_vars, num_io, exposed_varsets, A, B, C) = {
       let num_cons = 4;
       let num_vars = 4;
       let num_io = 2;
-      let num_exposed = vec![(1, 1)];
+      let mut exposed_varset = HashSet::new();
+      exposed_varset.insert(1);
+      let exposed_varsets: Vec<HashSet<usize>> = vec![exposed_varset];
 
       // Consider a cubic equation: `x^3 + x + 5 = y`, where `x` and `y` are respectively the input and output.
       // The R1CS for this problem consists of the following constraints:
@@ -408,12 +412,12 @@ mod tests {
       B.push((3, num_vars, one));
       C.push((3, num_vars + 2, one));
 
-      (num_cons, num_vars, num_io, num_exposed, A, B, C)
+      (num_cons, num_vars, num_io, exposed_varsets, A, B, C)
     };
 
     // create a shape object
     let S = {
-      let res = R1CSShape::new(num_cons, num_vars, num_io, &num_exposed, &A, &B, &C);
+      let res = R1CSShape::new(num_cons, num_vars, num_io, &exposed_varsets, &A, &B, &C);
       assert!(res.is_ok());
       res.unwrap()
     };
