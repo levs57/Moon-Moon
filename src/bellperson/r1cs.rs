@@ -77,13 +77,15 @@ where
 
     assert_eq!(num_cons_added, num_constraints);
 
+    let exposed_varsets = self.get_exposed_varsets();
+
     let S: R1CSShape<G> = {
       // Don't count One as an input for shape's purposes.
       let res = R1CSShape::new(
         num_constraints,
         num_vars,
         num_inputs - 1,
-        &self.,
+        &exposed_varsets,
         &A,
         &B,
         &C,

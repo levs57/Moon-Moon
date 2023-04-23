@@ -219,6 +219,14 @@ where
 
     self.named_objects.insert(path, to);
   }
+
+  pub fn get_exposed_varsets(&self) -> Vec<Vec<usize>> {
+    let mut ret = vec![];
+    for (_, v) in self.exposed_auxilaries.iter() {
+      ret.push(v.borrow().values().map(|x| *x).collect::<Vec<usize>>());
+    }
+    ret
+  }
 }
 
 impl<G: Group> Default for ShapeCS<G>
